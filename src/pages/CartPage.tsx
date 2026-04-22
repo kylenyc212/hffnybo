@@ -26,10 +26,9 @@ export function CartPage() {
   const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean } | null>(null);
 
   useEffect(() => {
-    if (!deviceLabel) return;
     (async () => {
       try {
-        const d = await getOpenDrawer(deviceLabel);
+        const d = await getOpenDrawer();
         setDrawer(d);
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : 'Failed to load drawer');
@@ -37,7 +36,7 @@ export function CartPage() {
         setDrawerLoading(false);
       }
     })();
-  }, [deviceLabel]);
+  }, []);
 
   const needsCash = subtotalCents > 0;
   const tenderCents = tenderStr ? toCents(parseFloat(tenderStr)) : 0;

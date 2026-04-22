@@ -78,9 +78,10 @@ create table if not exists public.cash_drawers (
 );
 create index if not exists cash_drawers_shift_idx on public.cash_drawers (shift_date, device_label);
 
--- Only one OPEN drawer per device at a time
-create unique index if not exists cash_drawers_one_open_per_device
-  on public.cash_drawers (device_label) where closed_at is null;
+-- Only one OPEN drawer globally at a time (shared across all iPads).
+-- Unique on a constant expression + partial WHERE = only one matching row.
+create unique index if not exists cash_drawers_one_open_shift
+  on public.cash_drawers ((true)) where closed_at is null;
 
 -- ========== CASH EVENTS ==========
 create table if not exists public.cash_events (

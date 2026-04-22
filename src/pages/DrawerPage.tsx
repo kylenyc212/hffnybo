@@ -20,10 +20,9 @@ export function DrawerPage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!deviceLabel) return;
     setErr(null);
     try {
-      const d = await getOpenDrawer(deviceLabel);
+      const d = await getOpenDrawer();
       setDrawer(d);
       if (d) setEvents(await loadDrawerEvents(d.id));
       else setEvents([]);
@@ -32,17 +31,30 @@ export function DrawerPage() {
     } finally {
       setLoading(false);
     }
-  }, [deviceLabel]);
+  }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Poll every 8 seconds so sales rung on another iPad show up here.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, 8000);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   if (!user || !deviceLabel) return <div className="p-6 text-slate-400">Sign in first.</div>;
   if (loading) return <div className="p-6 text-slate-400">Loading…</div>;
 
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Cash Drawer</h1>
-      <div className="text-sm text-slate-400 mb-4">Device: <span className="text-slate-200 font-semibold">{deviceLabel}</span></div>
+      <h1 className="text-2xl font-bold mb-1">Cash Drawer</h1>
+      <div className="text-sm text-slate-400 mb-4">
+        Shared cash box · this iPad: <span className="text-slate-200 font-semibold">{deviceLabel}</span>
+        {drawer && (
+          <> · opened by <span className="text-slate-200 font-semibold">{drawer.opened_by}</span> on <span className="text-slate-200">{drawer.device_label}</span></>
+        )}
+      </div>
       {err && <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-lg mb-4">{err}</div>}
 
       {!drawer ? (

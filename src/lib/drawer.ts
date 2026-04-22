@@ -2,11 +2,15 @@ import { supabase } from './supabase';
 import type { CashDrawerRow, CashEventRow, DenomBreakdown } from './database.types';
 import { nyTodayKey } from './datetime';
 
-export async function getOpenDrawer(deviceLabel: string): Promise<CashDrawerRow | null> {
+/**
+ * Returns the single globally-open drawer (the shared cash box for the shift),
+ * or null if no shift is currently open. The DB enforces that at most one
+ * such row exists via a partial unique index.
+ */
+export async function getOpenDrawer(): Promise<CashDrawerRow | null> {
   const { data, error } = await supabase
     .from('cash_drawers')
     .select('*')
-    .eq('device_label', deviceLabel)
     .is('closed_at', null)
     .maybeSingle();
   if (error) throw error;
