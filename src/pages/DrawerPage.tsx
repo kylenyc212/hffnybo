@@ -4,28 +4,40 @@ import { money, toCents } from '../lib/money';
 import {
   closeDrawer,
   getOpenDrawer,
-  loadDrawerEvents,
+  loadDrawerActivity,
+  listTestCounts,
   openDrawer,
-  removeCash
+  removeCash,
+  saveTestCount,
+  type EnrichedEvent
 } from '../lib/drawer';
-import type { CashDrawerRow, CashEventRow, DenomBreakdown } from '../lib/database.types';
+import type { CashCountRow, CashDrawerRow, DenomBreakdown } from '../lib/database.types';
 import { DenomCounter, totalFromDenoms } from '../components/DenomCounter';
+import { VoidModal } from '../components/VoidModal';
 
 export function DrawerPage() {
   const { user, deviceLabel } = useSession();
   const [drawer, setDrawer] = useState<CashDrawerRow | null>(null);
-  const [events, setEvents] = useState<CashEventRow[]>([]);
+  const [events, setEvents] = useState<EnrichedEvent[]>([]);
+  const [testCounts, setTestCounts] = useState<CashCountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [voidFor, setVoidFor] = useState<{ orderId: string; amountCents: number; description?: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setErr(null);
     try {
       const d = await getOpenDrawer();
       setDrawer(d);
-      if (d) setEvents(await loadDrawerEvents(d.id));
-      else setEvents([]);
+      if (d) {
+        const [ev, tc] = await Promise.all([loadDrawerActivity(d.id), listTestCounts(d.id)]);
+        setEvents(ev);
+        setTestCounts(tc);
+      } else {
+        setEvents([]);
+        setTestCounts([]);
+      }
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Failed to load drawer');
     } finally {
@@ -77,7 +89,11 @@ export function DrawerPage() {
         <OpenDrawerView
           drawer={drawer}
           events={events}
+          testCounts={testCounts}
+          cashierName={user.name}
           busy={busy}
+          onVoidRequest={(o) => setVoidFor(o)}
+          onRefresh={refresh}
           onRemove={async ({ amountCents, reason }) => {
             setBusy(true);
             setErr(null);
@@ -107,6 +123,15 @@ export function DrawerPage() {
               setBusy(false);
             }
           }}
+        />
+      )}
+      {voidFor && (
+        <VoidModal
+          orderId={voidFor.orderId}
+          orderAmountCents={voidFor.amountCents}
+          orderDescription={voidFor.description}
+          onClose={() => setVoidFor(null)}
+          onDone={async () => { setVoidFor(null); await refresh(); }}
         />
       )}
     </div>
@@ -142,24 +167,40 @@ function OpenDrawerForm({ busy, onSubmit }: { busy: boolean; onSubmit: (openingC
 
 interface OpenViewProps {
   drawer: CashDrawerRow;
-  events: CashEventRow[];
+  events: EnrichedEvent[];
+  testCounts: CashCountRow[];
+  cashierName: string;
   busy: boolean;
   onRemove: (p: { amountCents: number; reason: string }) => void;
   onClose: (p: { countedCents: number; denoms: DenomBreakdown }) => void;
+  onVoidRequest: (p: { orderId: string; amountCents: number; description?: string }) => void;
+  onRefresh: () => void;
 }
 
-function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewProps) {
+function OpenDrawerView({ drawer, events, testCounts, cashierName, busy, onRemove, onClose, onVoidRequest, onRefresh }: OpenViewProps) {
   const [showRemove, setShowRemove] = useState(false);
   const [showClose, setShowClose] = useState(false);
+  const [showTest, setShowTest] = useState(false);
   const [removeAmt, setRemoveAmt] = useState('');
   const [removeReason, setRemoveReason] = useState('');
   const [denoms, setDenoms] = useState<DenomBreakdown>({});
+  const [testDenoms, setTestDenoms] = useState<DenomBreakdown>({});
+  const [testNotes, setTestNotes] = useState('');
+  const [testBusy, setTestBusy] = useState(false);
+  const [testErr, setTestErr] = useState<string | null>(null);
 
-  const salesCents = events.filter((e) => e.kind === 'sale').reduce((s, e) => s + e.amount_cents, 0);
-  const salesCount = events.filter((e) => e.kind === 'sale').length;
+  // Sales events: sum + count, excluding voided (the void inserts an offsetting adjustment,
+  // but we still want "Sales" to reflect only non-voided money brought in).
+  const salesEvents = events.filter((e) => e.kind === 'sale' && !e.order_voided);
+  const salesCents = salesEvents.reduce((s, e) => s + e.amount_cents, 0);
+  const adjustments = events.filter((e) => e.kind === 'adjustment');
+  const adjustmentsCents = adjustments.reduce((s, e) => s + e.amount_cents, 0);
+  const salesCount = salesEvents.length;
   const removals = events.filter((e) => e.kind === 'removal');
   const removalsCents = removals.reduce((s, e) => s + e.amount_cents, 0); // already negative
-  const expectedCents = drawer.opening_cents + salesCents + removalsCents;
+  // Expected uses all sale events (voids get offset by the adjustment row automatically).
+  const rawSales = events.filter((e) => e.kind === 'sale').reduce((s, e) => s + e.amount_cents, 0);
+  const expectedCents = drawer.opening_cents + rawSales + adjustmentsCents + removalsCents;
 
   const countedCents = totalFromDenoms(denoms);
   const varianceCents = countedCents - expectedCents;
@@ -175,18 +216,66 @@ function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewPro
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => setShowRemove(!showRemove)}
-            className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-lg"
+            onClick={() => { setShowTest(!showTest); setShowRemove(false); setShowClose(false); }}
+            className="flex-1 min-w-[45%] bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-lg"
+          >
+            {showTest ? 'Cancel' : 'Test count'}
+          </button>
+          <button
+            onClick={() => { setShowRemove(!showRemove); setShowTest(false); setShowClose(false); }}
+            className="flex-1 min-w-[45%] bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-lg"
           >
             {showRemove ? 'Cancel' : 'Remove cash'}
           </button>
           <button
-            onClick={() => setShowClose(!showClose)}
+            onClick={() => { setShowClose(!showClose); setShowTest(false); setShowRemove(false); }}
             className="flex-1 bg-red-800 hover:bg-red-700 text-white font-semibold py-3 rounded-lg"
           >
-            {showClose ? 'Cancel' : 'Close drawer'}
+            {showClose ? 'Cancel' : 'Close drawer (end shift)'}
           </button>
         </div>
+
+        {showTest && (
+          <div className="mt-4 bg-slate-900 border border-slate-700 rounded-lg p-3">
+            <div className="text-sm font-semibold mb-1">Test count (draft — does not close drawer)</div>
+            <div className="text-xs text-slate-400 mb-2">
+              Count each denomination to spot-check the drawer. Saves a snapshot you can review in reports; drawer stays open.
+            </div>
+            <DenomCounter value={testDenoms} onChange={setTestDenoms} />
+            <input
+              className="mt-2 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
+              placeholder="Notes (optional)"
+              value={testNotes}
+              onChange={(e) => setTestNotes(e.target.value)}
+            />
+            {testErr && <div className="text-red-400 text-sm mt-2">{testErr}</div>}
+            <button
+              disabled={testBusy || totalFromDenoms(testDenoms) === 0}
+              onClick={async () => {
+                setTestErr(null); setTestBusy(true);
+                try {
+                  await saveTestCount({
+                    drawerId: drawer.id,
+                    who: cashierName,
+                    denoms: testDenoms,
+                    countedCents: totalFromDenoms(testDenoms),
+                    expectedCents,
+                    notes: testNotes.trim() || null
+                  });
+                  setTestDenoms({});
+                  setTestNotes('');
+                  setShowTest(false);
+                  onRefresh();
+                } catch (e: unknown) {
+                  setTestErr(e instanceof Error ? e.message : 'Save failed');
+                } finally { setTestBusy(false); }
+              }}
+              className="mt-3 w-full bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold py-3 rounded-lg"
+            >
+              {testBusy ? 'Saving…' : `Save test count · ${money(totalFromDenoms(testDenoms))}`}
+            </button>
+          </div>
+        )}
 
         {showRemove && (
           <div className="mt-4 bg-slate-900 border border-slate-700 rounded-lg p-3">
@@ -262,35 +351,78 @@ function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewPro
         )}
       </div>
 
+      {testCounts.length > 0 && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-4">
+          <div className="text-sm font-semibold mb-3">Test counts ({testCounts.length}) — drafts only</div>
+          <ul className="divide-y divide-slate-700">
+            {testCounts.map((t) => (
+              <li key={t.id} className="py-2 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm">
+                    <span className="text-slate-300 font-semibold">{money(t.counted_cents)} counted</span>
+                    <span className="text-slate-500"> · expected {money(t.expected_cents)}</span>
+                    {t.notes && <span className="text-slate-400"> — {t.notes}</span>}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {new Date(t.created_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} · {t.who}
+                  </div>
+                </div>
+                <div className={`tabular-nums font-semibold ${
+                  t.variance_cents === 0 ? 'text-emerald-400' :
+                  t.variance_cents > 0 ? 'text-amber-300' : 'text-red-400'
+                }`}>
+                  {t.variance_cents >= 0 ? '+' : ''}{money(t.variance_cents)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <div className="text-sm font-semibold mb-3">Activity ({events.length})</div>
         {events.length === 0 ? (
           <div className="text-slate-500 text-sm">No events yet.</div>
         ) : (
           <ul className="divide-y divide-slate-700">
-            {events.map((e) => (
-              <li key={e.id} className="py-2 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm">
-                    <span className={
-                      e.kind === 'sale' ? 'text-emerald-400' :
-                      e.kind === 'removal' ? 'text-amber-400' :
-                      e.kind === 'open' ? 'text-slate-300' :
-                      e.kind === 'close' ? 'text-red-400' : 'text-slate-400'
-                    }>
-                      {e.kind}
-                    </span>
-                    {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+            {events.map((e) => {
+              const voided = e.kind === 'sale' && e.order_voided;
+              return (
+                <li key={e.id} className="py-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm">
+                      <span className={
+                        e.kind === 'sale' ? (voided ? 'text-slate-500 line-through' : 'text-emerald-400') :
+                        e.kind === 'removal' ? 'text-amber-400' :
+                        e.kind === 'open' ? 'text-slate-300' :
+                        e.kind === 'close' ? 'text-red-400' :
+                        e.kind === 'adjustment' ? 'text-rose-400' : 'text-slate-400'
+                      }>
+                        {e.kind}{voided ? ' (voided)' : ''}
+                      </span>
+                      {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {new Date(e.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} · {e.who}
+                      {e.order_device && <> · {e.order_device}</>}
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {new Date(e.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} · {e.who}
+                  <div className={`tabular-nums font-semibold ${voided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''}`}>
+                    {e.amount_cents < 0 ? '' : '+'}{money(e.amount_cents)}
                   </div>
-                </div>
-                <div className={`tabular-nums font-semibold ${e.amount_cents < 0 ? 'text-red-400' : ''}`}>
-                  {e.amount_cents < 0 ? '' : '+'}{money(e.amount_cents)}
-                </div>
-              </li>
-            ))}
+                  {e.kind === 'sale' && !voided && e.order_id && (
+                    <button
+                      onClick={() => onVoidRequest({
+                        orderId: e.order_id!,
+                        amountCents: e.amount_cents,
+                        description: `${e.who} · ${new Date(e.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
+                      })}
+                      className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                    >Void</button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

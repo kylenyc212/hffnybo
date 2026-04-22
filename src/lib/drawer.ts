@@ -98,3 +98,66 @@ export async function loadDrawerEvents(drawerId: string): Promise<CashEventRow[]
   if (error) throw error;
   return (data as CashEventRow[]) ?? [];
 }
+
+export interface EnrichedEvent extends CashEventRow {
+  order_voided?: boolean;
+  order_device?: string;
+  order_cashier?: string;
+}
+
+export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEvent[]> {
+  const events = await loadDrawerEvents(drawerId);
+  const orderIds = Array.from(new Set(events.map((e) => e.order_id).filter(Boolean))) as string[];
+  if (orderIds.length === 0) return events;
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id, voided_at, device_label, cashier_name')
+    .in('id', orderIds);
+  if (error) return events;
+  const map = new Map((data ?? []).map((o) => [o.id as string, o as { id: string; voided_at: string | null; device_label: string; cashier_name: string }]));
+  return events.map((e) => {
+    if (!e.order_id) return e;
+    const o = map.get(e.order_id);
+    if (!o) return e;
+    return {
+      ...e,
+      order_voided: !!o.voided_at,
+      order_device: o.device_label,
+      order_cashier: o.cashier_name
+    };
+  });
+}
+
+// ---------- Test / draft cash counts ----------
+
+import type { CashCountRow, DenomBreakdown as _DB } from './database.types';
+
+export async function saveTestCount(params: {
+  drawerId: string;
+  who: string;
+  denoms: _DB;
+  countedCents: number;
+  expectedCents: number;
+  notes?: string | null;
+}) {
+  const { error } = await supabase.from('cash_counts').insert({
+    drawer_id: params.drawerId,
+    who: params.who,
+    denoms: params.denoms,
+    counted_cents: params.countedCents,
+    expected_cents: params.expectedCents,
+    variance_cents: params.countedCents - params.expectedCents,
+    notes: params.notes ?? null
+  });
+  if (error) throw error;
+}
+
+export async function listTestCounts(drawerId: string): Promise<CashCountRow[]> {
+  const { data, error } = await supabase
+    .from('cash_counts')
+    .select('*')
+    .eq('drawer_id', drawerId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as CashCountRow[];
+}

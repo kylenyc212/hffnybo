@@ -44,9 +44,9 @@ export async function loadDrawerReport(drawerId: string): Promise<DrawerReport> 
   const drawer = drawerData as CashDrawerRow;
   const events = (eventData ?? []) as CashEventRow[];
 
-  // Pull all orders + lines linked to this drawer.
+  // Pull all non-voided orders + lines linked to this drawer.
   const { data: orderData, error: oErr } = await supabase
-    .from('orders').select('*').eq('drawer_id', drawerId);
+    .from('orders').select('*').eq('drawer_id', drawerId).is('voided_at', null);
   if (oErr) throw oErr;
   const orders = (orderData ?? []) as OrderRow[];
 
@@ -159,7 +159,7 @@ export interface FestivalReport {
 export async function loadFestivalReport(): Promise<FestivalReport> {
   const [{ data: orderData, error: oErr }, { data: lineData, error: lErr }, { data: sData, error: sErr }] =
     await Promise.all([
-      supabase.from('orders').select('id, source').eq('source', 'boxoffice'),
+      supabase.from('orders').select('id, source, voided_at').eq('source', 'boxoffice').is('voided_at', null),
       supabase.from('order_lines').select('*'),
       supabase.from('screenings').select('*').order('starts_at', { ascending: true })
     ]);

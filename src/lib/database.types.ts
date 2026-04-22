@@ -57,6 +57,21 @@ export interface OrderRow {
   change_cents: number;
   source: 'boxoffice' | 'external_heartland';
   notes: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+}
+
+export interface CashCountRow {
+  id: string;
+  drawer_id: string;
+  created_at: string;
+  who: string;
+  denoms: DenomBreakdown;
+  counted_cents: number;
+  expected_cents: number;
+  variance_cents: number;
+  notes: string | null;
 }
 
 export interface OrderLineRow {
@@ -111,6 +126,7 @@ export interface Database {
       order_lines: { Row: OrderLineRow; Insert: Omit<OrderLineRow, 'id'>; Update: Partial<OrderLineRow> };
       cash_drawers: { Row: CashDrawerRow; Insert: Partial<CashDrawerRow> & { device_label: string; shift_date: string; opened_by: string; opening_cents: number }; Update: Partial<CashDrawerRow> };
       cash_events: { Row: CashEventRow; Insert: Omit<CashEventRow, 'id' | 'created_at'> & { created_at?: string }; Update: Partial<CashEventRow> };
+      cash_counts: { Row: CashCountRow; Insert: Omit<CashCountRow, 'id' | 'created_at'> & { created_at?: string }; Update: Partial<CashCountRow> };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

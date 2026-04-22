@@ -22,12 +22,21 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     .order('sort_order', { ascending: true });
   if (tErr) throw tErr;
 
+  // Exclude voided orders from inventory counts.
+  const { data: activeOrders, error: aErr } = await supabase
+    .from('orders')
+    .select('id')
+    .is('voided_at', null);
+  if (aErr) throw aErr;
+  const activeIds = new Set(((activeOrders ?? []) as { id: string }[]).map((o) => o.id));
+
   const { data: sold, error: cErr } = await supabase
     .from('order_lines')
-    .select('screening_id, qty');
+    .select('screening_id, qty, order_id');
   if (cErr) throw cErr;
 
-  const soldRows = (sold ?? []) as Array<{ screening_id: string; qty: number }>;
+  const soldRows = ((sold ?? []) as Array<{ screening_id: string; qty: number; order_id: string }>)
+    .filter((r) => activeIds.has(r.order_id));
   const soldByScreening = new Map<string, number>();
   for (const l of soldRows) {
     soldByScreening.set(l.screening_id, (soldByScreening.get(l.screening_id) ?? 0) + (l.qty ?? 0));
