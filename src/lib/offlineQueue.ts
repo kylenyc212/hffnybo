@@ -21,6 +21,10 @@ export interface QueuedOrder {
   change_cents: number;
   lines: CartLine[];
   notes?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  customer_address?: string | null;
   attempts: number;
   last_error?: string;
 }
@@ -84,7 +88,11 @@ export async function submitOrderToSupabase(o: QueuedOrder): Promise<void> {
     cash_tendered_cents: o.cash_tendered_cents,
     change_cents: o.change_cents,
     source: 'boxoffice',
-    notes: o.notes ?? null
+    notes: o.notes ?? null,
+    customer_name: o.customer_name ?? null,
+    customer_email: o.customer_email ?? null,
+    customer_phone: o.customer_phone ?? null,
+    customer_address: o.customer_address ?? null
   });
   if (orderErr) throw orderErr;
 

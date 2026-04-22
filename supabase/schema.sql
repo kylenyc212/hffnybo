@@ -111,7 +111,11 @@ create table if not exists public.orders (
   notes text,
   voided_at timestamptz,
   voided_by text,
-  void_reason text
+  void_reason text,
+  customer_name text,
+  customer_email text,
+  customer_phone text,
+  customer_address text
 );
 create index if not exists orders_created_at_idx on public.orders (created_at);
 create index if not exists orders_drawer_idx on public.orders (drawer_id);

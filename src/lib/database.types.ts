@@ -60,6 +60,10 @@ export interface OrderRow {
   voided_at: string | null;
   voided_by: string | null;
   void_reason: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  customer_address: string | null;
 }
 
 export interface CashCountRow {

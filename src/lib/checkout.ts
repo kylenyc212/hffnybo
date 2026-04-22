@@ -9,6 +9,10 @@ export interface CheckoutParams {
   drawerId: string | null;
   cashTenderedCents: number;
   notes?: string;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
 }
 
 export interface CheckoutResult {
@@ -56,6 +60,10 @@ export async function checkout(params: CheckoutParams): Promise<CheckoutResult> 
     change_cents: change,
     lines: params.lines,
     notes: params.notes ?? null,
+    customer_name: params.customerName ?? null,
+    customer_email: params.customerEmail ?? null,
+    customer_phone: params.customerPhone ?? null,
+    customer_address: params.customerAddress ?? null,
     attempts: 0
   };
 

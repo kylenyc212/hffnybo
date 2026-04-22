@@ -25,6 +25,13 @@ export function CartPage() {
   const [submitting, setSubmitting] = useState(false);
   const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean } | null>(null);
 
+  // Optional customer contact info
+  const [contactOpen, setContactOpen] = useState(false);
+  const [cName, setCName] = useState('');
+  const [cEmail, setCEmail] = useState('');
+  const [cPhone, setCPhone] = useState('');
+  const [cAddress, setCAddress] = useState('');
+
   useEffect(() => {
     (async () => {
       try {
@@ -56,7 +63,11 @@ export function CartPage() {
         cashierName: user.name,
         deviceLabel,
         drawerId: drawer?.id ?? null,
-        cashTenderedCents: needsCash ? tenderCents : 0
+        cashTenderedCents: needsCash ? tenderCents : 0,
+        customerName: cName.trim() || null,
+        customerEmail: cEmail.trim() || null,
+        customerPhone: cPhone.trim() || null,
+        customerAddress: cAddress.trim() || null
       });
       setLastSale({
         changeCents: result.changeCents,
@@ -65,6 +76,8 @@ export function CartPage() {
       });
       clear();
       setTenderStr('');
+      setCName(''); setCEmail(''); setCPhone(''); setCAddress('');
+      setContactOpen(false);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Checkout failed');
     } finally {
@@ -181,7 +194,58 @@ export function CartPage() {
             ))}
           </div>
 
-          <div className="mt-6 bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <div className="mt-4 bg-slate-800 border border-slate-700 rounded-xl p-4">
+            <button
+              onClick={() => setContactOpen(!contactOpen)}
+              className="w-full flex justify-between items-center text-left"
+            >
+              <span className="text-sm font-semibold">Customer info <span className="text-slate-500 font-normal">(optional)</span></span>
+              <span className="text-slate-400 text-xs">
+                {hasContact(cName, cEmail, cPhone, cAddress) ? 'filled in' : ''} {contactOpen ? '▾' : '▸'}
+              </span>
+            </button>
+            {contactOpen && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
+                  placeholder="Name"
+                  value={cName}
+                  onChange={(e) => setCName(e.target.value)}
+                />
+                <input
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
+                  placeholder="Email"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="off"
+                  value={cEmail}
+                  onChange={(e) => setCEmail(e.target.value)}
+                />
+                <input
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
+                  placeholder="Phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={cPhone}
+                  onChange={(e) => setCPhone(e.target.value)}
+                />
+                <input
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 sm:col-span-1"
+                  placeholder="Address"
+                  value={cAddress}
+                  onChange={(e) => setCAddress(e.target.value)}
+                />
+                {hasContact(cName, cEmail, cPhone, cAddress) && (
+                  <button
+                    onClick={() => { setCName(''); setCEmail(''); setCPhone(''); setCAddress(''); }}
+                    className="sm:col-span-2 text-xs text-slate-400 hover:text-red-400"
+                  >Clear customer info</button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 bg-slate-800 border border-slate-700 rounded-xl p-4">
             <div className="flex justify-between text-xl font-bold mb-3">
               <span>Subtotal</span>
               <span className="tabular-nums">{money(subtotalCents)}</span>
@@ -246,6 +310,10 @@ export function CartPage() {
       )}
     </div>
   );
+}
+
+function hasContact(n: string, e: string, p: string, a: string): boolean {
+  return !!(n.trim() || e.trim() || p.trim() || a.trim());
 }
 
 function roundUp(cents: number, toNearest: number): number {
