@@ -72,7 +72,9 @@ create table if not exists public.cash_drawers (
   opening_cents integer not null default 0,
   closed_at timestamptz,
   closed_by text,
-  counted_cents integer
+  counted_cents integer,
+  opening_denoms jsonb,
+  closing_denoms jsonb
 );
 create index if not exists cash_drawers_shift_idx on public.cash_drawers (shift_date, device_label);
 

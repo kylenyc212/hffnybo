@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { CashDrawerRow, CashEventRow } from './database.types';
+import type { CashDrawerRow, CashEventRow, DenomBreakdown } from './database.types';
 import { nyTodayKey } from './datetime';
 
 export async function getOpenDrawer(deviceLabel: string): Promise<CashDrawerRow | null> {
@@ -46,13 +46,15 @@ export async function closeDrawer(params: {
   drawerId: string;
   closedBy: string;
   countedCents: number;
+  closingDenoms?: DenomBreakdown | null;
 }) {
   const { error } = await supabase
     .from('cash_drawers')
     .update({
       closed_at: new Date().toISOString(),
       closed_by: params.closedBy,
-      counted_cents: params.countedCents
+      counted_cents: params.countedCents,
+      closing_denoms: params.closingDenoms ?? null
     })
     .eq('id', params.drawerId);
   if (error) throw error;

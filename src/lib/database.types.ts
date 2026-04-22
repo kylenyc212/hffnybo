@@ -73,6 +73,8 @@ export interface OrderLineRow {
   patron_name: string | null;
 }
 
+export type DenomBreakdown = Record<string, number>; // key = cent value, value = count
+
 export interface CashDrawerRow {
   id: string;
   device_label: string;
@@ -83,6 +85,8 @@ export interface CashDrawerRow {
   closed_at: string | null;
   closed_by: string | null;
   counted_cents: number | null;
+  opening_denoms: DenomBreakdown | null;
+  closing_denoms: DenomBreakdown | null;
 }
 
 export interface CashEventRow {

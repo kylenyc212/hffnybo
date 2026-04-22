@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
+import { DENOMS } from '../components/DenomCounter';
 import {
   downloadCSV,
   listDrawers,
@@ -111,6 +112,15 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
         rows.push([s.title, s.starts_at, l.label, l.category, l.qty, (l.totalCents / 100).toFixed(2)]);
       }
     }
+    if (report.drawer.closing_denoms) {
+      rows.push([]);
+      rows.push(['Closing denomination count']);
+      rows.push(['Denomination', 'Count', 'Subtotal $']);
+      for (const d of DENOMS) {
+        const q = report.drawer.closing_denoms[d.cents] ?? 0;
+        if (q > 0) rows.push([d.label, q, ((q * d.cents) / 100).toFixed(2)]);
+      }
+    }
     rows.push([]);
     rows.push(['Removals log']);
     rows.push(['Time', 'Who', 'Amount $', 'Reason']);
@@ -146,6 +156,24 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
             bold
           />
         </div>
+        {report.drawer.closing_denoms && (
+          <div className="mt-4">
+            <div className="text-xs uppercase text-slate-400 mb-1">Closing denomination count</div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm">
+              {DENOMS.map((d) => {
+                const q = report.drawer.closing_denoms?.[d.cents] ?? 0;
+                if (q === 0) return null;
+                return (
+                  <div key={d.cents} className="bg-slate-900 border border-slate-700 rounded px-2 py-1">
+                    <div className="text-xs text-slate-400">{d.label}</div>
+                    <div className="tabular-nums"><span className="font-semibold">{q}</span> <span className="text-slate-500 text-xs">= {money(q * d.cents)}</span></div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {report.removalsList.length > 0 && (
           <div className="mt-4">
             <div className="text-xs uppercase text-slate-400 mb-1">Removals</div>

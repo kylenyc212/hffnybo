@@ -8,7 +8,8 @@ import {
   openDrawer,
   removeCash
 } from '../lib/drawer';
-import type { CashDrawerRow, CashEventRow } from '../lib/database.types';
+import type { CashDrawerRow, CashEventRow, DenomBreakdown } from '../lib/database.types';
+import { DenomCounter, totalFromDenoms } from '../components/DenomCounter';
 
 export function DrawerPage() {
   const { user, deviceLabel } = useSession();
@@ -77,11 +78,16 @@ export function DrawerPage() {
               setBusy(false);
             }
           }}
-          onClose={async (countedCents) => {
+          onClose={async ({ countedCents, denoms }) => {
             setBusy(true);
             setErr(null);
             try {
-              await closeDrawer({ drawerId: drawer.id, closedBy: user.name, countedCents });
+              await closeDrawer({
+                drawerId: drawer.id,
+                closedBy: user.name,
+                countedCents,
+                closingDenoms: denoms
+              });
               await refresh();
             } catch (e: unknown) {
               setErr(e instanceof Error ? e.message : 'Failed to close drawer');
@@ -127,7 +133,7 @@ interface OpenViewProps {
   events: CashEventRow[];
   busy: boolean;
   onRemove: (p: { amountCents: number; reason: string }) => void;
-  onClose: (countedCents: number) => void;
+  onClose: (p: { countedCents: number; denoms: DenomBreakdown }) => void;
 }
 
 function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewProps) {
@@ -135,7 +141,7 @@ function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewPro
   const [showClose, setShowClose] = useState(false);
   const [removeAmt, setRemoveAmt] = useState('');
   const [removeReason, setRemoveReason] = useState('');
-  const [countedAmt, setCountedAmt] = useState('');
+  const [denoms, setDenoms] = useState<DenomBreakdown>({});
 
   const salesCents = events.filter((e) => e.kind === 'sale').reduce((s, e) => s + e.amount_cents, 0);
   const salesCount = events.filter((e) => e.kind === 'sale').length;
@@ -143,7 +149,7 @@ function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewPro
   const removalsCents = removals.reduce((s, e) => s + e.amount_cents, 0); // already negative
   const expectedCents = drawer.opening_cents + salesCents + removalsCents;
 
-  const countedCents = countedAmt ? toCents(parseFloat(countedAmt)) : 0;
+  const countedCents = totalFromDenoms(denoms);
   const varianceCents = countedCents - expectedCents;
 
   return (
@@ -205,37 +211,40 @@ function OpenDrawerView({ drawer, events, busy, onRemove, onClose }: OpenViewPro
 
         {showClose && (
           <div className="mt-4 bg-slate-900 border border-slate-700 rounded-lg p-3">
-            <div className="text-sm font-semibold mb-2">Close drawer — count the cash</div>
-            <input
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-2xl tabular-nums"
-              type="number" step="0.01" min="0" inputMode="decimal"
-              placeholder="Counted $"
-              value={countedAmt}
-              onChange={(e) => setCountedAmt(e.target.value)}
-            />
-            {countedAmt && (
-              <div className={`mt-2 flex justify-between text-lg font-bold ${
-                varianceCents === 0 ? 'text-emerald-400' :
-                varianceCents > 0 ? 'text-amber-300' : 'text-red-400'
-              }`}>
-                <span>Variance</span>
-                <span className="tabular-nums">
-                  {varianceCents > 0 ? '+' : ''}{money(varianceCents)}
-                </span>
+            <div className="text-sm font-semibold mb-2">Close drawer — count each denomination</div>
+            <DenomCounter value={denoms} onChange={setDenoms} />
+            {countedCents > 0 && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2">
+                  <div className="text-xs uppercase text-slate-400">Expected</div>
+                  <div className="text-lg font-bold tabular-nums">{money(expectedCents)}</div>
+                </div>
+                <div className={`border rounded-lg px-3 py-2 ${
+                  varianceCents === 0 ? 'bg-emerald-900/40 border-emerald-700' :
+                  varianceCents > 0 ? 'bg-amber-900/40 border-amber-700' : 'bg-red-900/40 border-red-700'
+                }`}>
+                  <div className="text-xs uppercase text-slate-300">Variance</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    varianceCents === 0 ? 'text-emerald-300' :
+                    varianceCents > 0 ? 'text-amber-300' : 'text-red-300'
+                  }`}>
+                    {varianceCents > 0 ? '+' : ''}{money(varianceCents)}
+                  </div>
+                </div>
               </div>
             )}
             <button
-              disabled={busy || !countedAmt}
+              disabled={busy || countedCents === 0}
               onClick={() => {
                 if (confirm(`Close drawer with counted ${money(countedCents)}? This cannot be reopened.`)) {
-                  onClose(countedCents);
-                  setCountedAmt('');
+                  onClose({ countedCents, denoms });
+                  setDenoms({});
                   setShowClose(false);
                 }
               }}
-              className="mt-2 w-full bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-lg"
+              className="mt-3 w-full bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-lg"
             >
-              Close drawer
+              Close drawer · {money(countedCents)}
             </button>
           </div>
         )}
