@@ -8,6 +8,7 @@ import { getOpenDrawer } from '../lib/drawer';
 import { checkout } from '../lib/checkout';
 import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
+import { PassScanner } from '../components/PassScanner';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -32,6 +33,32 @@ export function CartPage() {
   const [cEmail, setCEmail] = useState('');
   const [cPhone, setCPhone] = useState('');
   const [cAddress, setCAddress] = useState('');
+  const [scanOpen, setScanOpen] = useState(false);
+
+  // Auto-populate customer name from cart lines: if exactly one distinct patron
+  // name exists across comp lines (a single person bought all the comps),
+  // and the customer name field is still empty, fill it in.
+  useEffect(() => {
+    if (cName) return;
+    const names = Array.from(new Set(lines.map((l) => l.patronName).filter((n): n is string => !!n)));
+    if (names.length === 1) setCName(names[0]);
+  }, [lines, cName]);
+
+  // Push the customer name down to any comp lines that don't have a patron set.
+  function applyCustomerNameToCompLines(name: string, extra?: { passholderId?: string | null; email?: string | null }) {
+    if (!name.trim()) return;
+    for (const l of lines) {
+      if (l.category === 'comp' && !l.patronName) {
+        useCart.getState().updateLine(l.key, {
+          patronName: name.trim(),
+          ...(extra?.passholderId ? { passholderId: extra.passholderId } : {})
+        });
+      }
+    }
+    if (extra?.email !== undefined && !cEmail && extra.email) {
+      setCEmail(extra.email);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -207,11 +234,19 @@ export function CartPage() {
             </button>
             {contactOpen && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setScanOpen(true)}
+                  className="sm:col-span-2 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg"
+                >
+                  📷 Scan passholder barcode
+                </button>
                 <input
                   className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
                   placeholder="Name"
                   value={cName}
                   onChange={(e) => setCName(e.target.value)}
+                  onBlur={(e) => applyCustomerNameToCompLines(e.target.value)}
                 />
                 <input
                   className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
@@ -324,6 +359,17 @@ export function CartPage() {
             </button>
           </div>
         </>
+      )}
+      {scanOpen && (
+        <PassScanner
+          onClose={() => setScanOpen(false)}
+          onFound={(ph) => {
+            setCName(ph.name);
+            if (ph.email) setCEmail(ph.email);
+            applyCustomerNameToCompLines(ph.name, { passholderId: ph.id, email: ph.email });
+            setScanOpen(false);
+          }}
+        />
       )}
     </div>
   );
