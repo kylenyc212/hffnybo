@@ -182,6 +182,12 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <Cell label="Opening" value={money(report.openingCents)} />
           <Cell label={`Sales (${report.salesCount})`} value={money(report.salesCents)} tone="pos" />
+          {report.addsCents !== 0 && (
+            <Cell label={`Added (${report.addsList.length})`} value={money(report.addsCents)} tone="pos" />
+          )}
+          {report.adjustmentsCents !== 0 && (
+            <Cell label={`Adjustments (${report.adjustmentsList.length})`} value={money(report.adjustmentsCents)} tone={report.adjustmentsCents < 0 ? 'neg' : 'pos'} />
+          )}
           <Cell label={`Removals (${report.removalsList.length})`} value={money(report.removalsCents)} tone={report.removalsCents < 0 ? 'neg' : undefined} />
           <Cell label="Expected" value={money(report.expectedCents)} bold />
           <Cell label="Counted" value={report.countedCents !== null ? money(report.countedCents) : '—'} bold />

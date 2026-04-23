@@ -3,7 +3,7 @@
 export type CompCategory = 'press' | 'pass_holder' | 'industry';
 export type TicketCategory = 'paid' | 'comp' | 'other';
 export type UserRole = 'cashier' | 'admin';
-export type CashEventType = 'open' | 'sale' | 'removal' | 'close' | 'adjustment';
+export type CashEventType = 'open' | 'sale' | 'removal' | 'close' | 'adjustment' | 'add';
 
 export interface ScreeningRow {
   id: string;

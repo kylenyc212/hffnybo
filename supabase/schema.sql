@@ -87,7 +87,7 @@ create unique index if not exists cash_drawers_one_open_shift
 create table if not exists public.cash_events (
   id uuid primary key default gen_random_uuid(),
   drawer_id uuid not null references public.cash_drawers(id) on delete cascade,
-  kind text not null check (kind in ('open','sale','removal','close','adjustment')),
+  kind text not null check (kind in ('open','sale','removal','close','adjustment','add')),
   amount_cents integer not null,
   reason text,
   who text not null,

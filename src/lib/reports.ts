@@ -17,6 +17,10 @@ export interface DrawerReport {
   salesCount: number;
   removalsCents: number; // negative
   removalsList: CashEventRow[];
+  addsCents: number;
+  addsList: CashEventRow[];
+  adjustmentsCents: number;
+  adjustmentsList: CashEventRow[];
   expectedCents: number;
   countedCents: number | null;
   varianceCents: number | null;
@@ -79,9 +83,13 @@ function buildReport(
 ): DrawerReport {
   const salesEvents = events.filter((e) => e.kind === 'sale');
   const removalsList = events.filter((e) => e.kind === 'removal');
+  const addsList = events.filter((e) => e.kind === 'add');
+  const adjustmentsList = events.filter((e) => e.kind === 'adjustment');
   const salesCents = salesEvents.reduce((s, e) => s + e.amount_cents, 0);
   const removalsCents = removalsList.reduce((s, e) => s + e.amount_cents, 0);
-  const expectedCents = drawer.opening_cents + salesCents + removalsCents;
+  const addsCents = addsList.reduce((s, e) => s + e.amount_cents, 0);
+  const adjustmentsCents = adjustmentsList.reduce((s, e) => s + e.amount_cents, 0);
+  const expectedCents = drawer.opening_cents + salesCents + addsCents + adjustmentsCents + removalsCents;
 
   const screeningMap = new Map(screenings.map((s) => [s.id, s]));
   const bySc = new Map<string, ScreeningBreakdown>();
@@ -126,6 +134,10 @@ function buildReport(
     salesCount: salesEvents.length,
     removalsCents,
     removalsList,
+    addsCents,
+    addsList,
+    adjustmentsCents,
+    adjustmentsList,
     expectedCents,
     countedCents: drawer.counted_cents,
     varianceCents: drawer.counted_cents !== null ? drawer.counted_cents - expectedCents : null,

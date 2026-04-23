@@ -89,6 +89,23 @@ export async function removeCash(params: {
   if (error) throw error;
 }
 
+export async function addCash(params: {
+  drawerId: string;
+  amountCents: number;
+  reason: string;
+  who: string;
+}) {
+  const { error } = await supabase.from('cash_events').insert({
+    drawer_id: params.drawerId,
+    kind: 'add',
+    amount_cents: Math.abs(params.amountCents),
+    reason: params.reason,
+    who: params.who,
+    order_id: null
+  });
+  if (error) throw error;
+}
+
 export async function loadDrawerEvents(drawerId: string): Promise<CashEventRow[]> {
   const { data, error } = await supabase
     .from('cash_events')
