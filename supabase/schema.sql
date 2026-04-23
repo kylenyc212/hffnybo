@@ -24,6 +24,7 @@ create table if not exists public.screenings (
   online_sold integer not null default 0,
   notes text,
   is_free boolean not null default false,
+  is_always_available boolean not null default false,
   short_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

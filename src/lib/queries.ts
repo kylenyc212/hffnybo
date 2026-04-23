@@ -9,11 +9,11 @@ export interface ScreeningWithSold extends ScreeningRow {
 
 export async function loadScreenings(fromDate: string, toDate: string): Promise<ScreeningWithSold[]> {
   return cachedFetch(`${CacheKeys.screenings}:${fromDate}:${toDate}`, async () => {
+  // Pull festival-window screenings PLUS any always-available items (passes, merch).
   const { data: screenings, error: sErr } = await supabase
     .from('screenings')
     .select('*')
-    .gte('starts_at', fromDate)
-    .lte('starts_at', toDate + 'T23:59:59-04')
+    .or(`and(starts_at.gte.${fromDate},starts_at.lte.${toDate}T23:59:59-04),is_always_available.eq.true`)
     .order('starts_at', { ascending: true });
   if (sErr) throw sErr;
 

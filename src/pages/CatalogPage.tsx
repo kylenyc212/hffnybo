@@ -37,11 +37,20 @@ export function CatalogPage() {
     );
   };
 
-  // Group by NY-local day, hide past days entirely.
+  // Passes + merch (always-available) render at the top regardless of date.
+  const alwaysAvailable = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return screenings
+      .filter((s) => s.is_always_available)
+      .filter((s) => !q || s.title.toLowerCase().includes(q));
+  }, [screenings, search]);
+
+  // Regular screenings: group by NY-local day, hide past days.
   const grouped = useMemo(() => {
     const today = nyTodayKey();
     const q = search.trim().toLowerCase();
     const filtered = screenings.filter((s) => {
+      if (s.is_always_available) return false;
       if (nyDateKey(s.starts_at) < today) return false;
       if (q && !s.title.toLowerCase().includes(q)) return false;
       return true;
@@ -83,7 +92,20 @@ export function CatalogPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      {grouped.length === 0 ? (
+      {alwaysAvailable.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-sm uppercase tracking-wide text-amber-400 mb-2 sticky top-14 bg-slate-900 py-1">
+            Festival-wide
+          </h2>
+          <div className="space-y-3">
+            {alwaysAvailable.map((s) => (
+              <ScreeningCard key={s.id} screening={s} onSold={bumpSold} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {grouped.length === 0 && alwaysAvailable.length === 0 ? (
         <div className="text-slate-400">No upcoming screenings.</div>
       ) : (
         <div className="space-y-6">

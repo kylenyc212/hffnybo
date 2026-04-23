@@ -188,23 +188,34 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
   for (const t of typeRows) {
     const s = screeningMap.get(t.screening_id!);
     if (!s) continue;
-    const d = new Date(s.starts_at);
-    const timeStr = d.toLocaleString('en-US', {
-      timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'
-    });
-    const dayStr = d.toLocaleDateString('en-US', {
-      timeZone: 'America/New_York', month: 'short', day: 'numeric'
-    });
-    // Product Name: human-readable, fits on a small tablet button.
-    // Example: "AUN ES DE NOCHE — 5/1 6:00 PM · GA"
-    const shortTitle = s.title.length > 40 ? s.title.slice(0, 38) + '…' : s.title;
-    const name = `${shortTitle} — ${timeStr} · ${t.label}`;
+
+    let name: string;
+    let category: string;
+    if (s.short_code === 'PASSES') {
+      name = t.label;
+      category = 'Passes';
+    } else if (s.short_code === 'MERCH') {
+      name = t.label;
+      category = 'Merch';
+    } else {
+      const d = new Date(s.starts_at);
+      const timeStr = d.toLocaleString('en-US', {
+        timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'
+      });
+      const dayStr = d.toLocaleDateString('en-US', {
+        timeZone: 'America/New_York', month: 'short', day: 'numeric'
+      });
+      const shortTitle = s.title.length > 40 ? s.title.slice(0, 38) + '…' : s.title;
+      name = `${shortTitle} — ${timeStr} · ${t.label}`;
+      category = dayStr;
+    }
+
     rows.push([
       name,
       (t.price_cents / 100).toFixed(2),
       t.heartland_sku ?? '',           // Description holds the SKU too for visibility
       t.heartland_sku ?? '',           // UPC = our SKU (matching key for the API poll)
-      dayStr                            // Category = "May 1", "May 2", …
+      category
     ]);
   }
 

@@ -13,6 +13,7 @@ export interface ScreeningRow {
   online_sold: number;
   notes: string | null;
   is_free: boolean;
+  is_always_available: boolean;
   short_code: string | null;
   created_at: string;
   updated_at: string;

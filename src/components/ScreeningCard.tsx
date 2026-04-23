@@ -19,10 +19,11 @@ export function ScreeningCard({ screening, onSold }: Props) {
   const [otherAmount, setOtherAmount] = useState('');
   const [otherQty, setOtherQty] = useState(1);
 
+  const alwaysAvailable = screening.is_always_available;
   const totalSold = screening.sold_in_person + screening.online_sold;
   const remaining = Math.max(0, screening.capacity - totalSold);
-  const nearCapacity = remaining <= 10;
-  const atCapacity = remaining <= 0;
+  const nearCapacity = !alwaysAvailable && remaining <= 10;
+  const atCapacity = !alwaysAvailable && remaining <= 0;
 
   const paid = screening.ticket_types.filter((t) => t.category === 'paid');
   const comps = screening.ticket_types.filter((t) => t.category === 'comp');
@@ -68,24 +69,28 @@ export function ScreeningCard({ screening, onSold }: Props) {
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-3">
+    <div className={`bg-slate-800 border rounded-xl p-3 ${alwaysAvailable ? 'border-amber-700' : 'border-slate-700'}`}>
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
           <div className="text-base sm:text-lg font-semibold break-words leading-snug">
             {screening.title}
-            <span className="text-slate-400 font-normal"> — {fmtTime(screening.starts_at)}</span>
+            {!alwaysAvailable && (
+              <span className="text-slate-400 font-normal"> — {fmtTime(screening.starts_at)}</span>
+            )}
             {screening.is_free && (
               <span className="ml-2 text-xs bg-emerald-700 text-white px-2 py-0.5 rounded align-middle">FREE</span>
             )}
           </div>
-          {screening.short_code && (
+          {screening.short_code && !alwaysAvailable && (
             <div className="text-[10px] text-slate-500 font-mono mt-0.5">Heartland: {screening.short_code}</div>
           )}
         </div>
-        <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
-          <div className="font-semibold">{remaining} left</div>
-          <div>{totalSold}/{screening.capacity}</div>
-        </div>
+        {!alwaysAvailable && (
+          <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
+            <div className="font-semibold">{remaining} left</div>
+            <div>{totalSold}/{screening.capacity}</div>
+          </div>
+        )}
       </div>
 
       {paid.length > 0 && (
