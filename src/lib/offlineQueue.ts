@@ -28,6 +28,8 @@ export interface QueuedOrder {
   cash_tendered_cents: number;
   change_cents: number;
   lines: CartLine[];
+  source?: 'boxoffice' | 'external_heartland';
+  external_ref?: string | null;
   notes?: string | null;
   customer_name?: string | null;
   customer_email?: string | null;
@@ -136,6 +138,7 @@ export async function submitOrderToSupabase(o: QueuedOrder): Promise<void> {
     .from('orders').select('id').eq('id', o.id).maybeSingle();
   if (existing) return;
 
+  const source = o.source ?? 'boxoffice';
   const { error: orderErr } = await supabase.from('orders').insert({
     id: o.id,
     created_at: o.created_at,
@@ -146,7 +149,8 @@ export async function submitOrderToSupabase(o: QueuedOrder): Promise<void> {
     subtotal_cents: o.subtotal_cents,
     cash_tendered_cents: o.cash_tendered_cents,
     change_cents: o.change_cents,
-    source: 'boxoffice',
+    source,
+    external_ref: o.external_ref ?? null,
     notes: o.notes ?? null,
     customer_name: o.customer_name ?? null,
     customer_email: o.customer_email ?? null,
@@ -173,7 +177,9 @@ export async function submitOrderToSupabase(o: QueuedOrder): Promise<void> {
     throw linesErr;
   }
 
-  if (o.subtotal_cents > 0 && o.drawer_id) {
+  // Only cash box-office sales update the drawer — external (Heartland) sales
+  // never affect the cash drawer.
+  if (source === 'boxoffice' && o.subtotal_cents > 0 && o.drawer_id) {
     await supabase.from('cash_events').insert({
       drawer_id: o.drawer_id,
       kind: 'sale',

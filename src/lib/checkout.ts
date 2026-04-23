@@ -1,6 +1,8 @@
 import type { CartLine } from './cart';
 import { enqueue, submitOrderToSupabase, type QueuedOrder } from './offlineQueue';
 
+export type OrderSource = 'boxoffice' | 'external_heartland';
+
 export interface CheckoutParams {
   lines: CartLine[];
   cashierId: string;
@@ -8,6 +10,8 @@ export interface CheckoutParams {
   deviceLabel: string;
   drawerId: string | null;
   cashTenderedCents: number;
+  source?: OrderSource;
+  externalRef?: string | null;
   notes?: string;
   customerName?: string | null;
   customerEmail?: string | null;
@@ -37,9 +41,11 @@ export async function checkout(params: CheckoutParams): Promise<CheckoutResult> 
   if (params.lines.length === 0) throw new Error('Cart is empty');
 
   const subtotal = params.lines.reduce((sum, l) => sum + l.qty * l.unitPriceCents, 0);
-  const needsCash = subtotal > 0;
+  const source: OrderSource = params.source ?? 'boxoffice';
+  const isExternal = source === 'external_heartland';
+  const needsCash = subtotal > 0 && !isExternal;
   if (needsCash && !params.drawerId) {
-    throw new Error('Open a cash drawer before completing a paid sale.');
+    throw new Error('Open a cash drawer before completing a paid cash sale.');
   }
   if (needsCash && params.cashTenderedCents < subtotal) {
     throw new Error(
@@ -54,10 +60,13 @@ export async function checkout(params: CheckoutParams): Promise<CheckoutResult> 
     cashier_id: params.cashierId,
     cashier_name: params.cashierName,
     device_label: params.deviceLabel,
-    drawer_id: params.drawerId,
+    // External (Heartland) sales never touch the cash drawer.
+    drawer_id: isExternal ? null : params.drawerId,
     subtotal_cents: subtotal,
     cash_tendered_cents: needsCash ? params.cashTenderedCents : 0,
     change_cents: change,
+    source,
+    external_ref: params.externalRef ?? null,
     lines: params.lines,
     notes: params.notes ?? null,
     customer_name: params.customerName ?? null,

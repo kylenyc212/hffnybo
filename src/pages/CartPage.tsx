@@ -25,7 +25,9 @@ export function CartPage() {
   const [tenderStr, setTenderStr] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean } | null>(null);
+  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean } | null>(null);
+  const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
+  const [externalRef, setExternalRef] = useState('');
 
   // Optional customer contact info (visible by default so cashier sees the option)
   const [contactOpen, setContactOpen] = useState(true);
@@ -73,12 +75,15 @@ export function CartPage() {
     })();
   }, []);
 
-  const needsCash = subtotalCents > 0;
+  const isExternal = payMethod === 'external';
+  const needsCash = subtotalCents > 0 && !isExternal;
   const tenderCents = tenderStr ? toCents(parseFloat(tenderStr)) : 0;
   const changeCents = tenderCents - subtotalCents;
   const canCheckout =
     lines.length > 0 &&
-    (!needsCash || (drawer && tenderCents >= subtotalCents));
+    (isExternal
+      ? subtotalCents > 0 // external requires a non-zero sale (comps go through cash path with $0)
+      : !needsCash || (drawer && tenderCents >= subtotalCents));
 
   async function submit() {
     if (!user || !deviceLabel) return;
@@ -92,6 +97,8 @@ export function CartPage() {
         deviceLabel,
         drawerId: drawer?.id ?? null,
         cashTenderedCents: needsCash ? tenderCents : 0,
+        source: isExternal ? 'external_heartland' : 'boxoffice',
+        externalRef: isExternal ? (externalRef.trim() || null) : null,
         customerName: cName.trim() || null,
         customerEmail: cEmail.trim() || null,
         customerPhone: cPhone.trim() || null,
@@ -100,12 +107,15 @@ export function CartPage() {
       setLastSale({
         changeCents: result.changeCents,
         subtotalCents: result.subtotalCents,
-        synced: result.synced
+        synced: result.synced,
+        external: isExternal
       });
       clear();
       setTenderStr('');
+      setExternalRef('');
+      setPayMethod('cash');
       setCName(''); setCEmail(''); setCPhone(''); setCAddress('');
-      setContactOpen(false);
+      setContactOpen(true);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Checkout failed');
     } finally {
@@ -118,15 +128,18 @@ export function CartPage() {
       <div className="p-6 max-w-xl mx-auto">
         <div className={`${lastSale.synced ? 'bg-emerald-900/40 border-emerald-700' : 'bg-amber-900/40 border-amber-600'} border rounded-2xl p-6 text-center`}>
           <div className={`text-2xl font-bold ${lastSale.synced ? 'text-emerald-200' : 'text-amber-200'}`}>
-            {lastSale.synced ? 'Sale complete' : 'Saved offline'}
+            {lastSale.synced ? (lastSale.external ? 'External sale recorded' : 'Sale complete') : 'Saved offline'}
           </div>
           {!lastSale.synced && (
             <div className="mt-2 text-sm text-amber-200">
               No network — order queued locally. Will sync automatically when back online.
             </div>
           )}
+          {lastSale.external && (
+            <div className="mt-2 text-xs text-slate-400">Heartland sale logged. Cash drawer was not touched.</div>
+          )}
           <div className="mt-3 text-slate-300">Total: {money(lastSale.subtotalCents)}</div>
-          {lastSale.changeCents > 0 && (
+          {lastSale.changeCents > 0 && !lastSale.external && (
             <div className="mt-2 text-3xl font-bold text-amber-300">
               Give change: {money(lastSale.changeCents)}
             </div>
@@ -287,6 +300,48 @@ export function CartPage() {
               <span className="tabular-nums">{money(subtotalCents)}</span>
             </div>
 
+            {subtotalCents > 0 && (
+              <div className="mb-4">
+                <div className="text-xs uppercase text-slate-400 mb-1">Payment method</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayMethod('cash')}
+                    className={`py-3 rounded-lg font-semibold ${
+                      payMethod === 'cash' ? 'bg-brand text-white' : 'bg-slate-900 text-slate-300 border border-slate-700'
+                    }`}
+                  >
+                    💵 Cash
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayMethod('external')}
+                    className={`py-3 rounded-lg font-semibold ${
+                      payMethod === 'external' ? 'bg-brand text-white' : 'bg-slate-900 text-slate-300 border border-slate-700'
+                    }`}
+                  >
+                    💳 External (CC)
+                  </button>
+                </div>
+                {isExternal && (
+                  <div className="mt-3 bg-slate-900 border border-slate-700 rounded-lg p-3">
+                    <div className="text-xs text-slate-400 mb-1">
+                      Charge the customer on your Heartland terminal, then record the sale here. Skips the cash drawer.
+                    </div>
+                    <label className="block">
+                      <div className="text-xs text-slate-400 mb-1">Heartland receipt # / reference (optional)</div>
+                      <input
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
+                        placeholder="e.g. 123456"
+                        value={externalRef}
+                        onChange={(e) => setExternalRef(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
             {needsCash ? (
               <>
                 <div className="text-xs uppercase text-slate-400 mb-2">Cash tendered — tap bills as you take them</div>
@@ -338,6 +393,8 @@ export function CartPage() {
                   </div>
                 )}
               </>
+            ) : isExternal ? (
+              <div className="text-sm text-slate-400 mb-3">External (CC) order — charge on Heartland terminal first, then tap Record.</div>
             ) : (
               <div className="text-sm text-slate-400 mb-3">Comp-only order — no cash collected.</div>
             )}
@@ -349,7 +406,9 @@ export function CartPage() {
               onClick={submit}
               className="mt-3 w-full bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg"
             >
-              {submitting ? 'Saving…' : needsCash ? 'Complete sale' : 'Record comps'}
+              {submitting ? 'Saving…' :
+                isExternal ? 'Record external (CC) sale' :
+                needsCash ? 'Complete sale' : 'Record comps'}
             </button>
             <button
               onClick={() => { if (confirm('Empty the cart?')) clear(); }}

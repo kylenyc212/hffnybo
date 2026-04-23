@@ -78,6 +78,9 @@ export function ScreeningCard({ screening, onSold }: Props) {
               <span className="ml-2 text-xs bg-emerald-700 text-white px-2 py-0.5 rounded align-middle">FREE</span>
             )}
           </div>
+          {screening.short_code && (
+            <div className="text-[10px] text-slate-500 font-mono mt-0.5">Heartland: {screening.short_code}</div>
+          )}
         </div>
         <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
           <div className="font-semibold">{remaining} left</div>

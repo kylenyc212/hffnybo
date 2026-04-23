@@ -13,6 +13,7 @@ export interface ScreeningRow {
   online_sold: number;
   notes: string | null;
   is_free: boolean;
+  short_code: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,6 +27,7 @@ export interface TicketTypeRow {
   comp_category: CompCategory | null;
   sort_order: number;
   active: boolean;
+  heartland_sku: string | null;
 }
 
 export interface PassholderRow {
@@ -64,6 +66,21 @@ export interface OrderRow {
   customer_email: string | null;
   customer_phone: string | null;
   customer_address: string | null;
+  external_ref: string | null;
+}
+
+export type HeartlandTxnStatus = 'pending' | 'matched' | 'needs_review' | 'ignored';
+
+export interface HeartlandTransactionRow {
+  id: string;
+  heartland_txn_id: string;
+  amount_cents: number;
+  charged_at: string;
+  raw: unknown;
+  matched_order_id: string | null;
+  status: HeartlandTxnStatus;
+  notes: string | null;
+  created_at: string;
 }
 
 export interface CashCountRow {

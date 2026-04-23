@@ -24,10 +24,13 @@ create table if not exists public.screenings (
   online_sold integer not null default 0,
   notes text,
   is_free boolean not null default false,
+  short_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index if not exists screenings_starts_at_idx on public.screenings (starts_at);
+create unique index if not exists screenings_short_code_idx
+  on public.screenings (short_code) where short_code is not null;
 
 create or replace function public.touch_updated_at() returns trigger
 language plpgsql as $$
@@ -48,9 +51,12 @@ create table if not exists public.ticket_types (
   category text not null check (category in ('paid','comp','other')),
   comp_category text check (comp_category in ('press','pass_holder','industry')),
   sort_order integer not null default 0,
-  active boolean not null default true
+  active boolean not null default true,
+  heartland_sku text
 );
 create index if not exists ticket_types_screening_idx on public.ticket_types (screening_id);
+create unique index if not exists ticket_types_heartland_sku_idx
+  on public.ticket_types (heartland_sku) where heartland_sku is not null;
 
 -- ========== PASSHOLDERS ==========
 create table if not exists public.passholders (
@@ -115,8 +121,29 @@ create table if not exists public.orders (
   customer_name text,
   customer_email text,
   customer_phone text,
-  customer_address text
+  customer_address text,
+  external_ref text
 );
+create unique index if not exists orders_external_ref_idx
+  on public.orders (external_ref) where external_ref is not null;
+
+create table if not exists public.heartland_transactions (
+  id uuid primary key default gen_random_uuid(),
+  heartland_txn_id text not null unique,
+  amount_cents integer not null,
+  charged_at timestamptz not null,
+  raw jsonb,
+  matched_order_id uuid references public.orders(id) on delete set null,
+  status text not null default 'pending' check (status in ('pending','matched','needs_review','ignored')),
+  notes text,
+  created_at timestamptz not null default now()
+);
+create index if not exists heartland_txn_status_idx on public.heartland_transactions (status);
+create index if not exists heartland_txn_date_idx on public.heartland_transactions (charged_at);
+alter table public.heartland_transactions enable row level security;
+do $$ begin
+  create policy anon_all on public.heartland_transactions for all to anon using (true) with check (true);
+exception when duplicate_object then null; end $$;
 create index if not exists orders_created_at_idx on public.orders (created_at);
 create index if not exists orders_drawer_idx on public.orders (drawer_id);
 create index if not exists orders_voided_idx on public.orders (voided_at);
