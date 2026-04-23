@@ -9,6 +9,15 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
+      // Activate new service workers immediately and claim existing clients
+      // so a deploy picks up on the very next page load (not the one after).
+      workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        // Don't cache index.html — always fetch fresh so new JS bundles load.
+        navigateFallbackDenylist: [/^\/api/],
+        cleanupOutdatedCaches: true
+      },
       manifest: {
         name: 'HFFNY Box Office',
         short_name: 'HFFNY BO',
