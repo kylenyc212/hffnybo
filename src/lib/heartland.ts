@@ -161,7 +161,14 @@ export async function backfillSkus(): Promise<{ updated: number }> {
 
 /**
  * Build a CSV of all paid ticket types (non-comp) for bulk upload into
- * Heartland's item catalog. One row per (screening, ticket_type) combo.
+ * Heartland Mobile Payments' item catalog. One row per (screening, ticket_type) combo.
+ *
+ * Heartland's import template columns (order matters):
+ *   Product Name, Price, Description, UPC, Category
+ *
+ * Our SKU lands in the UPC column — Heartland Mobile accepts alphanumeric UPCs.
+ * The Category column is the screening date so cashiers can filter by day
+ * inside the Heartland app.
  */
 export async function buildHeartlandCatalogCSV(): Promise<string> {
   const [{ data: screenings }, { data: types }] = await Promise.all([
@@ -172,7 +179,7 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
     ((screenings ?? []) as Array<Pick<ScreeningRow, 'id' | 'title' | 'starts_at' | 'short_code'>>)
       .map((s) => [s.id, s])
   );
-  const rows: string[][] = [['Name', 'SKU', 'Price', 'Category', 'Description']];
+  const rows: string[][] = [['Product Name', 'Price', 'Description', 'UPC', 'Category']];
 
   const typeRows = ((types ?? []) as TicketTypeRow[])
     .filter((t) => t.category !== 'comp') // Comps don't go through Heartland
@@ -181,18 +188,23 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
   for (const t of typeRows) {
     const s = screeningMap.get(t.screening_id!);
     if (!s) continue;
-    const when = new Date(s.starts_at).toLocaleString('en-US', {
-      timeZone: 'America/New_York',
-      weekday: 'short', month: 'short', day: 'numeric',
-      hour: 'numeric', minute: '2-digit'
+    const d = new Date(s.starts_at);
+    const timeStr = d.toLocaleString('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'
     });
-    const name = `${s.title} — ${when} (${t.label})`;
+    const dayStr = d.toLocaleDateString('en-US', {
+      timeZone: 'America/New_York', month: 'short', day: 'numeric'
+    });
+    // Product Name: human-readable, fits on a small tablet button.
+    // Example: "AUN ES DE NOCHE — 5/1 6:00 PM · GA"
+    const shortTitle = s.title.length > 40 ? s.title.slice(0, 38) + '…' : s.title;
+    const name = `${shortTitle} — ${timeStr} · ${t.label}`;
     rows.push([
       name,
-      t.heartland_sku!,
       (t.price_cents / 100).toFixed(2),
-      'HFFNY Box Office',
-      `${s.short_code ?? ''} · ${t.label}`
+      t.heartland_sku ?? '',           // Description holds the SKU too for visibility
+      t.heartland_sku ?? '',           // UPC = our SKU (matching key for the API poll)
+      dayStr                            // Category = "May 1", "May 2", …
     ]);
   }
 
