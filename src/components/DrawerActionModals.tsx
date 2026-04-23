@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { DenomCounter, totalFromDenoms } from './DenomCounter';
 import { money } from '../lib/money';
 import { closeDrawer, saveTestCount } from '../lib/drawer';
+import { queueCount, syncPending } from '../lib/offlineQueue';
 import type { CashDrawerRow, DenomBreakdown } from '../lib/database.types';
 
 interface Common {
@@ -85,6 +86,7 @@ export function CloseDrawerModal({ drawer, expectedCents, who, onClose, onDone }
   const [denoms, setDenoms] = useState<DenomBreakdown>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [pending, setPending] = useState(queueCount());
   const counted = useMemo(() => totalFromDenoms(denoms), [denoms]);
   const variance = counted - expectedCents;
 
@@ -98,6 +100,30 @@ export function CloseDrawerModal({ drawer, expectedCents, who, onClose, onDone }
         <div className="text-xs text-amber-200 bg-amber-900/30 border border-amber-800 rounded p-2">
           This locks the drawer for the shift. Cashiers on all iPads will need to open a new drawer to ring paid sales again.
         </div>
+        {pending > 0 && (
+          <div className="bg-red-900/40 border border-red-700 rounded p-3 text-sm">
+            <div className="font-bold text-red-200">
+              ⚠ {pending} unsynced {pending === 1 ? 'sale' : 'sales'} on this device
+            </div>
+            <div className="text-red-200/80 mt-1">
+              Sync these before closing so they land in the report. Check other iPads too.
+            </div>
+            <button
+              type="button"
+              disabled={!navigator.onLine || busy}
+              onClick={async () => {
+                setErr(null); setBusy(true);
+                try {
+                  await syncPending();
+                  setPending(queueCount());
+                } finally { setBusy(false); }
+              }}
+              className="mt-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-3 py-1 rounded text-xs"
+            >
+              {navigator.onLine ? (busy ? 'Syncing…' : 'Sync now') : 'Offline — reconnect first'}
+            </button>
+          </div>
+        )}
         <DenomCounter value={denoms} onChange={setDenoms} />
         {counted > 0 && (
           <div className="grid grid-cols-2 gap-2">

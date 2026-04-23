@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { ScreeningRow, TicketTypeRow, PassholderRow } from './database.types';
+import { cachedFetch, CacheKeys } from './cache';
 
 export interface ScreeningWithSold extends ScreeningRow {
   sold_in_person: number;
@@ -7,6 +8,7 @@ export interface ScreeningWithSold extends ScreeningRow {
 }
 
 export async function loadScreenings(fromDate: string, toDate: string): Promise<ScreeningWithSold[]> {
+  return cachedFetch(`${CacheKeys.screenings}:${fromDate}:${toDate}`, async () => {
   const { data: screenings, error: sErr } = await supabase
     .from('screenings')
     .select('*')
@@ -50,14 +52,39 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     sold_in_person: soldByScreening.get(s.id) ?? 0,
     ticket_types: typeRows.filter((t) => t.screening_id === s.id)
   }));
+  });
+}
+
+// Refresh the passholders cache every time we touch it for scanning. Returns
+// the full list from cache or network.
+async function loadAllPassholdersCached(): Promise<PassholderRow[]> {
+  return cachedFetch(CacheKeys.passholders, async () => {
+    const { data, error } = await supabase
+      .from('passholders')
+      .select('id, name, email, barcode, synced_at');
+    if (error) throw error;
+    return (data ?? []) as PassholderRow[];
+  });
 }
 
 export async function lookupPassholder(barcode: string): Promise<PassholderRow | null> {
-  const { data, error } = await supabase
-    .from('passholders')
-    .select('id, name, email, barcode, synced_at')
-    .eq('barcode', barcode.trim())
-    .maybeSingle();
-  if (error) throw error;
-  return (data as PassholderRow | null) ?? null;
+  // Hit the local cache first — pass scans need to work offline. We pre-warm the
+  // cache at login and opportunistically refresh in the background. If the scan
+  // misses the cache, only then hit the network.
+  const trimmed = barcode.trim();
+  const list = await loadAllPassholdersCached().catch(() => [] as PassholderRow[]);
+  const cached = list.find((p) => p.barcode === trimmed);
+  if (cached) return cached;
+  // Fallback: still attempt a direct lookup (in case cache is empty/stale)
+  try {
+    const { data, error } = await supabase
+      .from('passholders')
+      .select('id, name, email, barcode, synced_at')
+      .eq('barcode', trimmed)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as PassholderRow | null) ?? null;
+  } catch {
+    return null;
+  }
 }

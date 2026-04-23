@@ -1,20 +1,32 @@
 import { supabase } from './supabase';
 import type { CashDrawerRow, CashEventRow, DenomBreakdown } from './database.types';
 import { nyTodayKey } from './datetime';
+import * as cache from './cache';
+import { CacheKeys } from './cache';
+import { enqueueOp } from './offlineQueue';
 
 /**
  * Returns the single globally-open drawer (the shared cash box for the shift),
  * or null if no shift is currently open. The DB enforces that at most one
  * such row exists via a partial unique index.
+ * Caches the result so offline devices can still see the drawer.
  */
 export async function getOpenDrawer(): Promise<CashDrawerRow | null> {
-  const { data, error } = await supabase
-    .from('cash_drawers')
-    .select('*')
-    .is('closed_at', null)
-    .maybeSingle();
-  if (error) throw error;
-  return (data as CashDrawerRow | null) ?? null;
+  try {
+    const { data, error } = await supabase
+      .from('cash_drawers')
+      .select('*')
+      .is('closed_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    const row = (data as CashDrawerRow | null) ?? null;
+    cache.set(CacheKeys.openDrawer, row);
+    return row;
+  } catch (e) {
+    const cached = cache.get<CashDrawerRow | null>(CacheKeys.openDrawer);
+    if (cached) return cached.data;
+    throw e;
+  }
 }
 
 export async function openDrawer(params: {
@@ -72,21 +84,37 @@ export async function closeDrawer(params: {
   });
 }
 
+function newEventId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export async function removeCash(params: {
   drawerId: string;
   amountCents: number;
   reason: string;
   who: string;
 }) {
-  const { error } = await supabase.from('cash_events').insert({
+  const id = newEventId();
+  const payload = {
+    id,
     drawer_id: params.drawerId,
-    kind: 'removal',
+    kind: 'removal' as const,
     amount_cents: -Math.abs(params.amountCents),
     reason: params.reason,
     who: params.who,
-    order_id: null
-  });
-  if (error) throw error;
+    order_id: null,
+    created_at: new Date().toISOString()
+  };
+  try {
+    const { error } = await supabase.from('cash_events').insert(payload);
+    if (error) throw error;
+  } catch {
+    enqueueOp({ type: 'insert_cash_event', id, payload });
+  }
 }
 
 export async function addCash(params: {
@@ -95,25 +123,42 @@ export async function addCash(params: {
   reason: string;
   who: string;
 }) {
-  const { error } = await supabase.from('cash_events').insert({
+  const id = newEventId();
+  const payload = {
+    id,
     drawer_id: params.drawerId,
-    kind: 'add',
+    kind: 'add' as const,
     amount_cents: Math.abs(params.amountCents),
     reason: params.reason,
     who: params.who,
-    order_id: null
-  });
-  if (error) throw error;
+    order_id: null,
+    created_at: new Date().toISOString()
+  };
+  try {
+    const { error } = await supabase.from('cash_events').insert(payload);
+    if (error) throw error;
+  } catch {
+    enqueueOp({ type: 'insert_cash_event', id, payload });
+  }
 }
 
 export async function loadDrawerEvents(drawerId: string): Promise<CashEventRow[]> {
-  const { data, error } = await supabase
-    .from('cash_events')
-    .select('*')
-    .eq('drawer_id', drawerId)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-  return (data as CashEventRow[]) ?? [];
+  const cacheKey = `${CacheKeys.drawerEvents}:${drawerId}`;
+  try {
+    const { data, error } = await supabase
+      .from('cash_events')
+      .select('*')
+      .eq('drawer_id', drawerId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    const rows = (data as CashEventRow[]) ?? [];
+    cache.set(cacheKey, rows);
+    return rows;
+  } catch (e) {
+    const cached = cache.get<CashEventRow[]>(cacheKey);
+    if (cached) return cached.data;
+    throw e;
+  }
 }
 
 export interface EnrichedEvent extends CashEventRow {
@@ -157,24 +202,41 @@ export async function saveTestCount(params: {
   expectedCents: number;
   notes?: string | null;
 }) {
-  const { error } = await supabase.from('cash_counts').insert({
+  const id = newEventId();
+  const payload = {
+    id,
     drawer_id: params.drawerId,
     who: params.who,
     denoms: params.denoms,
     counted_cents: params.countedCents,
     expected_cents: params.expectedCents,
     variance_cents: params.countedCents - params.expectedCents,
-    notes: params.notes ?? null
-  });
-  if (error) throw error;
+    notes: params.notes ?? null,
+    created_at: new Date().toISOString()
+  };
+  try {
+    const { error } = await supabase.from('cash_counts').insert(payload);
+    if (error) throw error;
+  } catch {
+    enqueueOp({ type: 'insert_cash_count', id, payload });
+  }
 }
 
 export async function listTestCounts(drawerId: string): Promise<CashCountRow[]> {
-  const { data, error } = await supabase
-    .from('cash_counts')
-    .select('*')
-    .eq('drawer_id', drawerId)
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as CashCountRow[];
+  const cacheKey = `${CacheKeys.testCounts}:${drawerId}`;
+  try {
+    const { data, error } = await supabase
+      .from('cash_counts')
+      .select('*')
+      .eq('drawer_id', drawerId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (data ?? []) as CashCountRow[];
+    cache.set(cacheKey, rows);
+    return rows;
+  } catch (e) {
+    const cached = cache.get<CashCountRow[]>(cacheKey);
+    if (cached) return cached.data;
+    throw e;
+  }
 }

@@ -1,11 +1,25 @@
 import { useEffect, useState } from 'react';
 import { queueCount, subscribe, syncPending, wireAutoSync } from '../lib/offlineQueue';
+import { latestSync, CacheKeys } from '../lib/cache';
+
+function fmtAgo(d: Date): string {
+  const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (secs < 45) return 'just now';
+  if (secs < 90) return '1m ago';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs}h ago`;
+}
 
 export function SyncIndicator() {
   const [n, setN] = useState(queueCount());
   const [online, setOnline] = useState(navigator.onLine);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(
+    latestSync([CacheKeys.screenings + ':2026-05-01:2026-05-07', CacheKeys.passholders, CacheKeys.openDrawer])
+  );
 
   useEffect(() => {
     wireAutoSync();
@@ -14,10 +28,19 @@ export function SyncIndicator() {
     const onOff = () => setOnline(false);
     window.addEventListener('online', onOn);
     window.addEventListener('offline', onOff);
+    // Tick last-sync clock every 30s
+    const tick = setInterval(() => {
+      setLastSync(latestSync([
+        CacheKeys.screenings + ':2026-05-01:2026-05-07',
+        CacheKeys.passholders,
+        CacheKeys.openDrawer
+      ]));
+    }, 30_000);
     return () => {
       unsub();
       window.removeEventListener('online', onOn);
       window.removeEventListener('offline', onOff);
+      clearInterval(tick);
     };
   }, []);
 
@@ -32,20 +55,22 @@ export function SyncIndicator() {
     setTimeout(() => setMsg(null), 4000);
   }
 
-  if (online && n === 0) {
-    return (
-      <div className="flex items-center gap-1 text-xs text-emerald-400" title="Online, all sales synced">
-        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> online
-      </div>
-    );
-  }
+  const stale = lastSync ? (Date.now() - lastSync.getTime()) / 60000 : Infinity;
+  const staleTone =
+    stale < 5 ? 'text-slate-500' :
+    stale < 30 ? 'text-amber-400' : 'text-red-400';
 
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <div className="flex items-center gap-1" title={online ? 'Online' : 'Offline'}>
+    <div className="flex items-center gap-3 text-xs">
+      <div className="flex items-center gap-1" title={online ? 'Online' : 'Offline — still works, queues sales locally'}>
         <span className={`w-2 h-2 rounded-full inline-block ${online ? 'bg-emerald-500' : 'bg-red-500'}`} />
-        {online ? 'online' : 'offline'}
+        <span className={online ? 'text-emerald-400' : 'text-red-400'}>{online ? 'online' : 'offline'}</span>
       </div>
+      {lastSync && (
+        <div className={staleTone} title={`Catalog + passholders last refreshed ${lastSync.toLocaleString()}`}>
+          data {fmtAgo(lastSync)}
+        </div>
+      )}
       {n > 0 && (
         <>
           <span className="bg-amber-600 text-white font-semibold px-2 py-0.5 rounded-full">{n} pending</span>
