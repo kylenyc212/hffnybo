@@ -339,36 +339,20 @@ function QtyStepper({ qty, locked, onChange }: { qty: number; locked: boolean; o
 }
 
 function PatronEditor({ line, onChange }: { line: CartLine; onChange: (name: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(line.patronName ?? '');
-
-  if (!editing) {
-    return (
-      <button
-        onClick={() => setEditing(true)}
-        className="text-xs text-slate-400 hover:text-slate-200 mt-0.5"
-      >
-        {line.patronName ? `Patron: ${line.patronName} ✎` : '+ Add patron name'}
-      </button>
-    );
+  // Use the browser prompt() — reliable on iPad Safari (inline React state editor
+  // was flaky in PWA standalone mode on 2026-04-22).
+  function edit() {
+    const next = window.prompt('Patron name for this comp ticket', line.patronName ?? '');
+    if (next === null) return; // user cancelled
+    onChange(next.trim());
   }
   return (
-    <div className="flex gap-1 mt-1">
-      <input
-        autoFocus
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        placeholder="Patron name"
-        className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 flex-1 min-w-0"
-      />
-      <button
-        onClick={() => { onChange(val.trim()); setEditing(false); }}
-        className="text-xs bg-slate-700 px-2 rounded"
-      >OK</button>
-      <button
-        onClick={() => { setVal(line.patronName ?? ''); setEditing(false); }}
-        className="text-xs text-slate-400"
-      >Cancel</button>
-    </div>
+    <button
+      type="button"
+      onClick={edit}
+      className="text-xs text-slate-400 hover:text-slate-200 mt-0.5 underline-offset-2 hover:underline"
+    >
+      {line.patronName ? `Patron: ${line.patronName} ✎` : '+ Add patron name'}
+    </button>
   );
 }

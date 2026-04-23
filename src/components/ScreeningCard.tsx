@@ -68,18 +68,20 @@ export function ScreeningCard({ screening, onSold }: Props) {
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-      <div className="flex items-start justify-between gap-4 mb-3">
-        <div className="min-w-0">
-          <div className="text-sm text-slate-400">{fmtTime(screening.starts_at)}</div>
-          <div className="text-lg font-semibold break-words">{screening.title}</div>
-          {screening.is_free && (
-            <span className="text-xs bg-emerald-700 px-2 py-0.5 rounded mt-1 inline-block">FREE</span>
-          )}
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-base sm:text-lg font-semibold break-words leading-snug">
+            {screening.title}
+            <span className="text-slate-400 font-normal"> — {fmtTime(screening.starts_at)}</span>
+            {screening.is_free && (
+              <span className="ml-2 text-xs bg-emerald-700 text-white px-2 py-0.5 rounded align-middle">FREE</span>
+            )}
+          </div>
         </div>
-        <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-400'}`}>
-          <div>{remaining} left</div>
-          <div className="text-slate-500">{totalSold}/{screening.capacity} sold</div>
+        <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
+          <div className="font-semibold">{remaining} left</div>
+          <div>{totalSold}/{screening.capacity}</div>
         </div>
       </div>
 

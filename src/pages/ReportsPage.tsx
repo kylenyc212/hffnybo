@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { DENOMS } from '../components/DenomCounter';
+import { TestCountModal, CloseDrawerModal } from '../components/DrawerActionModals';
+import { useSession } from '../lib/session';
 import {
   downloadCSV,
   listDrawers,
@@ -42,10 +44,14 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
 }
 
 function DrawerReportView() {
+  const { user } = useSession();
   const [drawers, setDrawers] = useState<CashDrawerRow[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [report, setReport] = useState<DrawerReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [showTest, setShowTest] = useState(false);
+  const [showClose, setShowClose] = useState(false);
+  const [bump, setBump] = useState(0);
 
   useEffect(() => {
     listDrawers()
@@ -54,35 +60,69 @@ function DrawerReportView() {
         if (list.length && !selected) setSelected(list[0].id);
       })
       .catch((e) => setErr(e.message));
-  }, []);
+  }, [bump]);
 
   useEffect(() => {
     if (!selected) return;
     setReport(null);
     setErr(null);
     loadDrawerReport(selected).then(setReport).catch((e) => setErr(e.message));
-  }, [selected]);
+  }, [selected, bump]);
 
   if (err) return <div className="text-red-400">{err}</div>;
   if (drawers.length === 0) return <div className="text-slate-400">No drawers opened yet.</div>;
 
+  const isOpen = report && !report.drawer.closed_at;
+
   return (
     <div>
-      <div className="mb-4">
-        <label className="block text-xs uppercase text-slate-400 mb-1">Drawer</label>
-        <select
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 w-full"
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-        >
-          {drawers.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.shift_date} · {d.device_label} · {d.opened_by} · {d.closed_at ? 'closed' : 'OPEN'}
-            </option>
-          ))}
-        </select>
+      <div className="mb-4 flex items-end gap-2 flex-wrap">
+        <label className="flex-1 min-w-[200px]">
+          <div className="block text-xs uppercase text-slate-400 mb-1">Drawer</div>
+          <select
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 w-full"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {drawers.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.shift_date} · {d.device_label} · {d.opened_by} · {d.closed_at ? 'closed' : 'OPEN'}
+              </option>
+            ))}
+          </select>
+        </label>
+        {isOpen && user && report && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowTest(true)}
+              className="bg-slate-700 hover:bg-slate-600 text-white font-semibold px-4 py-2 rounded-lg"
+            >Test count</button>
+            <button
+              onClick={() => setShowClose(true)}
+              className="bg-red-800 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg"
+            >Close drawer</button>
+          </div>
+        )}
       </div>
       {report && <DrawerReportBody report={report} />}
+      {showTest && report && user && (
+        <TestCountModal
+          drawer={report.drawer}
+          expectedCents={report.expectedCents}
+          who={user.name}
+          onClose={() => setShowTest(false)}
+          onDone={() => { setShowTest(false); setBump((n) => n + 1); }}
+        />
+      )}
+      {showClose && report && user && (
+        <CloseDrawerModal
+          drawer={report.drawer}
+          expectedCents={report.expectedCents}
+          who={user.name}
+          onClose={() => setShowClose(false)}
+          onDone={() => { setShowClose(false); setBump((n) => n + 1); }}
+        />
+      )}
     </div>
   );
 }
