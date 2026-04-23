@@ -26,8 +26,8 @@ export function CartPage() {
   const [submitting, setSubmitting] = useState(false);
   const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean } | null>(null);
 
-  // Optional customer contact info
-  const [contactOpen, setContactOpen] = useState(false);
+  // Optional customer contact info (visible by default so cashier sees the option)
+  const [contactOpen, setContactOpen] = useState(true);
   const [cName, setCName] = useState('');
   const [cEmail, setCEmail] = useState('');
   const [cPhone, setCPhone] = useState('');
@@ -254,8 +254,37 @@ export function CartPage() {
 
             {needsCash ? (
               <>
+                <div className="text-xs uppercase text-slate-400 mb-2">Cash tendered — tap bills as you take them</div>
+                <div className="grid grid-cols-5 gap-2 mb-2">
+                  {[500, 1000, 2000, 5000, 10000].map((cents) => (
+                    <button
+                      key={cents}
+                      type="button"
+                      onClick={() => setTenderStr(((tenderCents + cents) / 100).toFixed(2))}
+                      className="bg-emerald-800 hover:bg-emerald-700 text-white font-bold py-4 rounded-lg text-base sm:text-lg"
+                    >
+                      +${cents / 100}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setTenderStr((subtotalCents / 100).toFixed(2))}
+                    className="bg-slate-700 hover:bg-slate-600 text-sm font-semibold px-3 py-2 rounded-lg"
+                  >
+                    Exact ({money(subtotalCents)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTenderStr('')}
+                    className="bg-slate-700 hover:bg-slate-600 text-sm font-semibold px-3 py-2 rounded-lg"
+                  >
+                    Clear
+                  </button>
+                </div>
                 <label className="block mb-3">
-                  <div className="text-xs uppercase text-slate-400 mb-1">Cash tendered</div>
+                  <div className="text-xs uppercase text-slate-400 mb-1">Or type cash tendered</div>
                   <input
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-2xl tabular-nums"
                     type="number"
@@ -267,19 +296,6 @@ export function CartPage() {
                     onChange={(e) => setTenderStr(e.target.value)}
                   />
                 </label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {[subtotalCents, roundUp(subtotalCents, 500), roundUp(subtotalCents, 1000), roundUp(subtotalCents, 2000)].map(
-                    (cents, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setTenderStr((cents / 100).toFixed(2))}
-                        className="bg-slate-700 hover:bg-slate-600 text-sm font-semibold px-3 py-2 rounded-lg"
-                      >
-                        {money(cents)}
-                      </button>
-                    )
-                  )}
-                </div>
                 {tenderStr && (
                   <div className={`text-lg font-bold flex justify-between ${changeCents < 0 ? 'text-red-400' : 'text-amber-300'}`}>
                     <span>{changeCents < 0 ? 'Short by' : 'Change due'}</span>
@@ -315,11 +331,6 @@ export function CartPage() {
 
 function hasContact(n: string, e: string, p: string, a: string): boolean {
   return !!(n.trim() || e.trim() || p.trim() || a.trim());
-}
-
-function roundUp(cents: number, toNearest: number): number {
-  if (cents === 0) return toNearest;
-  return Math.ceil(cents / toNearest) * toNearest;
 }
 
 function QtyStepper({ qty, locked, onChange }: { qty: number; locked: boolean; onChange: (q: number) => void }) {
