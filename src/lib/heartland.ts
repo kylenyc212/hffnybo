@@ -199,15 +199,25 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
       category = 'Merch';
     } else {
       const d = new Date(s.starts_at);
-      const timeStr = d.toLocaleString('en-US', {
-        timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'
+      // Compact time: "6PM" or "9:45PM". Heartland tablet rows are narrow.
+      const rawTime = d.toLocaleString('en-US', {
+        timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true
       });
-      const dayStr = d.toLocaleDateString('en-US', {
+      const timeStr = rawTime.replace(':00', '').replace(' ', '');
+      // Date: "5/2" instead of "May 2" to save width.
+      const mdy = d.toLocaleDateString('en-US', {
+        timeZone: 'America/New_York', month: 'numeric', day: 'numeric'
+      });
+      // Short ticket-type label (no parens/special chars)
+      const typeLabel = shortTypeLabel(t.label);
+      // Clean title: strip any special characters, cap length.
+      const cleanTitle = cleanForExport(s.title);
+      const shortTitle = cleanTitle.length > 40 ? cleanTitle.slice(0, 37) + '...' : cleanTitle;
+      name = `${shortTitle} ${mdy} ${timeStr} ${typeLabel}`;
+      // Category column: "May 2" is human-friendly in the Heartland grid.
+      category = d.toLocaleDateString('en-US', {
         timeZone: 'America/New_York', month: 'short', day: 'numeric'
       });
-      const shortTitle = s.title.length > 40 ? s.title.slice(0, 38) + '…' : s.title;
-      name = `${shortTitle} — ${timeStr} · ${t.label}`;
-      category = dayStr;
     }
 
     rows.push([
@@ -224,6 +234,29 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
     return v;
   };
   return rows.map((r) => r.map(esc).join(',')).join('\n');
+}
+
+// Strip characters some POS imports choke on (em-dash, middle dot, ellipsis,
+// curly quotes). Keep Spanish accents + tildes — those are part of legitimate
+// film titles and every modern POS should handle UTF-8 accented letters.
+function cleanForExport(s: string): string {
+  return s
+    .replace(/[\u2013\u2014]/g, '-')   // en-dash, em-dash  -> hyphen
+    .replace(/[\u00B7\u2022]/g, '-')   // middle dot, bullet -> hyphen
+    .replace(/\u2026/g, '...')          // ellipsis
+    .replace(/[\u2018\u2019]/g, "'")    // curly single quotes
+    .replace(/[\u201C\u201D]/g, '"')    // curly double quotes
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shortTypeLabel(label: string): string {
+  const l = label.toLowerCase();
+  if (l.includes('general admission')) return 'GA';
+  if (l.includes('student') || l.includes('senior')) return 'SS';
+  if (l.includes('party')) return 'Party';
+  if (l.includes('other')) return 'Other';
+  return cleanForExport(label);
 }
 
 export function downloadCatalogCSV(content: string) {
