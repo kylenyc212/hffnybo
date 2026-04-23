@@ -236,16 +236,24 @@ export async function buildHeartlandCatalogCSV(): Promise<string> {
   return rows.map((r) => r.map(esc).join(',')).join('\n');
 }
 
-// Strip characters some POS imports choke on (em-dash, middle dot, ellipsis,
-// curly quotes). Keep Spanish accents + tildes — those are part of legitimate
-// film titles and every modern POS should handle UTF-8 accented letters.
+// Heartland Mobile rejects non-ASCII characters in inventory imports.
+// We transliterate everything to plain ASCII:
+//   - NFD normalization splits "Ñ" into "N" + combining tilde
+//   - stripping combining marks (U+0300–U+036F) leaves just "N"
+//   - other Unicode separators (em-dash, middle dot, ellipsis, smart quotes)
+//     get replaced with ASCII equivalents
+// The original title is preserved everywhere else in the app — this is only
+// for the CSV going to Heartland.
 function cleanForExport(s: string): string {
   return s
-    .replace(/[\u2013\u2014]/g, '-')   // en-dash, em-dash  -> hyphen
-    .replace(/[\u00B7\u2022]/g, '-')   // middle dot, bullet -> hyphen
-    .replace(/\u2026/g, '...')          // ellipsis
-    .replace(/[\u2018\u2019]/g, "'")    // curly single quotes
-    .replace(/[\u201C\u201D]/g, '"')    // curly double quotes
+    .normalize('NFD')                   // decompose accented chars
+    .replace(/[\u0300-\u036f]/g, '')    // strip combining marks
+    .replace(/[\u2013\u2014]/g, '-')    // en-dash, em-dash  -> hyphen
+    .replace(/[\u00B7\u2022]/g, '-')    // middle dot, bullet -> hyphen
+    .replace(/\u2026/g, '...')           // ellipsis
+    .replace(/[\u2018\u2019]/g, "'")     // curly single quotes
+    .replace(/[\u201C\u201D]/g, '"')     // curly double quotes
+    .replace(/[^\x20-\x7E]/g, '')        // drop anything else non-printable-ASCII
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -260,7 +268,10 @@ function shortTypeLabel(label: string): string {
 }
 
 export function downloadCatalogCSV(content: string) {
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+  // Prepend a UTF-8 BOM so Excel detects the encoding correctly. Without it,
+  // Excel opens CSVs as Windows-1252 and mangles any byte >127. The BOM is
+  // harmless for Heartland (which strips it) and a must-have for Excel.
+  const blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
