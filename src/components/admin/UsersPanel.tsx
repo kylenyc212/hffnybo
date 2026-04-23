@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { addUser, listUsers, resetUserPin, setUserActive } from '../../lib/admin';
 import type { UserRole, UserRow } from '../../lib/database.types';
+import { InputPromptModal } from '../InputPromptModal';
 
 export function UsersPanel() {
   const [list, setList] = useState<UserRow[]>([]);
@@ -10,6 +11,7 @@ export function UsersPanel() {
   const [newName, setNewName] = useState('');
   const [newPin, setNewPin] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('cashier');
+  const [resetFor, setResetFor] = useState<UserRow | null>(null);
 
   async function reload() {
     try { setList(await listUsers()); }
@@ -83,12 +85,7 @@ export function UsersPanel() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={async () => {
-                    const pin = prompt(`New PIN for ${u.name} (4–8 digits)`);
-                    if (!pin || !/^\d{4,8}$/.test(pin)) return;
-                    try { await resetUserPin(u.id, pin); alert('PIN reset.'); }
-                    catch (e: unknown) { alert(e instanceof Error ? e.message : 'Failed'); }
-                  }}
+                  onClick={() => setResetFor(u)}
                   className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded"
                 >Reset PIN</button>
                 <button
@@ -107,6 +104,26 @@ export function UsersPanel() {
           ))}
         </ul>
       </div>
+
+      {resetFor && (
+        <InputPromptModal
+          title={`Reset PIN for ${resetFor.name}`}
+          label="New PIN (4–8 digits)"
+          placeholder="1234"
+          confirmLabel="Reset"
+          onClose={() => setResetFor(null)}
+          onConfirm={async (pin) => {
+            if (!/^\d{4,8}$/.test(pin)) { alert('PIN must be 4–8 digits'); return; }
+            try {
+              await resetUserPin(resetFor.id, pin);
+              setResetFor(null);
+              setMsg('PIN reset.');
+            } catch (e: unknown) {
+              alert(e instanceof Error ? e.message : 'Failed');
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { fmtWhen } from '../lib/datetime';
 import { getOpenDrawer } from '../lib/drawer';
 import { checkout } from '../lib/checkout';
 import type { CashDrawerRow } from '../lib/database.types';
+import { InputPromptModal } from '../components/InputPromptModal';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -339,20 +340,31 @@ function QtyStepper({ qty, locked, onChange }: { qty: number; locked: boolean; o
 }
 
 function PatronEditor({ line, onChange }: { line: CartLine; onChange: (name: string) => void }) {
-  // Use the browser prompt() — reliable on iPad Safari (inline React state editor
-  // was flaky in PWA standalone mode on 2026-04-22).
-  function edit() {
-    const next = window.prompt('Patron name for this comp ticket', line.patronName ?? '');
-    if (next === null) return; // user cancelled
-    onChange(next.trim());
-  }
+  // In-page modal (iOS PWA standalone blocks window.prompt, so we use a custom modal).
+  const [open, setOpen] = useState(false);
   return (
-    <button
-      type="button"
-      onClick={edit}
-      className="text-xs text-slate-400 hover:text-slate-200 mt-0.5 underline-offset-2 hover:underline"
-    >
-      {line.patronName ? `Patron: ${line.patronName} ✎` : '+ Add patron name'}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-slate-400 hover:text-slate-200 mt-0.5 underline-offset-2 hover:underline"
+      >
+        {line.patronName ? `Patron: ${line.patronName} ✎` : '+ Add patron name'}
+      </button>
+      {open && (
+        <InputPromptModal
+          title="Patron name"
+          label="Attach a name to this comp ticket"
+          initial={line.patronName ?? ''}
+          placeholder="e.g. Jane Doe"
+          confirmLabel="Save"
+          onClose={() => setOpen(false)}
+          onConfirm={(val) => {
+            onChange(val);
+            setOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 }
