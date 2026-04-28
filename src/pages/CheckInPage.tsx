@@ -112,7 +112,7 @@ export function CheckInPage() {
 
     try {
       const params = new URLSearchParams({ ticket: tn });
-      if (eventId) params.set('eventId', eventId);
+      if (eid) params.set('eventId', eid);  // use local var — setEventId(eid) is async, state not updated yet
       const res  = await fetch(`/api/wix-checkin?${params}`);
       const data = await res.json() as Record<string, unknown>;
       setRawResponse(data);
