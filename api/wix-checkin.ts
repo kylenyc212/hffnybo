@@ -116,11 +116,33 @@ export default async function handler(req: VReq, res: VRes) {
             } catch { /* name lookup failed — proceed without it */ }
           }
 
+          // Try to get ticket type name from the order (guest query doesn't include it)
+          let ticketName: string | null = null;
+          const orderNum = String(g.orderNumber ?? '');
+          if (orderNum) {
+            try {
+              const orRes = await fetch(
+                `${WIX_BASE}/events/v1/orders/${encodeURIComponent(orderNum)}`,
+                { headers: getHeaders }
+              );
+              if (orRes.ok) {
+                const orBody = await orRes.json() as Record<string, unknown>;
+                const order = (orBody.order ?? orBody) as Record<string, unknown>;
+                const tickets = Array.isArray(order.tickets) ? order.tickets as Record<string, unknown>[] : [];
+                const matchedTicket = tickets.find(
+                  (t) => t.ticketNumber === ticketNumber || t.ticketNumber === g.ticketNumber
+                ) ?? tickets[0];
+                if (matchedTicket?.name) ticketName = String(matchedTicket.name);
+              }
+            } catch { /* order lookup failed — proceed without ticket name */ }
+          }
+
           const ticket: Record<string, unknown> = {
             ticketNumber:  g.ticketNumber ?? ticketNumber,
+            eventId:       g.eventId,          // needed for check-in POST when no QR eventId
             orderFullName,
             guestDetails:  g.guestDetails ?? null,
-            name:          (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? null,
+            name:          ticketName ?? (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? null,
             checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.attendanceStatusUpdatedDate } : null,
             checkedIn:     g.attendanceStatus === 'ATTENDED',
             canceled:      addl?.archived === true,

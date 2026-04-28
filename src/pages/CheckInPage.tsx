@@ -17,6 +17,7 @@ interface WixTicket {
   canceled?: boolean;
   archived?: boolean;
   orderStatus?: string;
+  eventId?: string;
   [key: string]: unknown;
 }
 
@@ -133,9 +134,11 @@ export function CheckInPage() {
   }
 
   async function doCheckIn() {
-    const tn = ticket?.ticketNumber ?? ticketNum;
+    const tn  = ticket?.ticketNumber ?? ticketNum;
+    // Prefer eventId parsed from QR; fall back to eventId returned by lookup API
+    const eid = eventId || String(ticket?.eventId ?? '');
     if (!tn) return;
-    if (!eventId) {
+    if (!eid) {
       setErr('Event ID is missing — scan the full QR code from the ticket (not just the ticket number).');
       return;
     }
@@ -145,7 +148,7 @@ export function CheckInPage() {
       const res  = await fetch('/api/wix-checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketNumber: tn, eventId }),
+        body: JSON.stringify({ ticketNumber: tn, eventId: eid }),
       });
       const data = await res.json() as Record<string, unknown>;
       if (!res.ok) {
