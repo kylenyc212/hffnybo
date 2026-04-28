@@ -17,15 +17,16 @@ interface WixTicket {
 }
 
 /** Parse a Wix ticket QR code URL or bare ticket number.
- *  QR format: https://www.wixevents.com/check-in/{ticketNumber},{eventId} */
-function parseQr(raw: string): string | null {
+ *  QR format: https://www.wixevents.com/check-in/{ticketNumber},{eventId}
+ *  Returns { ticketNumber, eventId } — eventId may be empty string. */
+function parseQr(raw: string): { ticketNumber: string; eventId: string } | null {
   const trimmed = raw.trim();
   try {
     const u = new URL(trimmed);
-    const m = u.pathname.match(/\/check-in\/([^,/?]+)/);
-    if (m) return m[1];
+    const m = u.pathname.match(/\/check-in\/([^,/?]+)(?:,([^/?]+))?/);
+    if (m) return { ticketNumber: m[1], eventId: m[2] ?? '' };
   } catch { /* not a URL */ }
-  return trimmed || null;
+  return trimmed ? { ticketNumber: trimmed, eventId: '' } : null;
 }
 
 /** Detect "already checked in" across possible Wix field shapes */
@@ -92,9 +93,10 @@ export function CheckInPage() {
   }, [phase, scanKey]);
 
   async function handleCode(raw: string) {
-    const tn = parseQr(raw);
-    if (!tn) { setErr('Could not read a ticket number from that QR code.'); return; }
+    const parsed = parseQr(raw);
+    if (!parsed) { setErr('Could not read a ticket number from that QR code.'); return; }
 
+    const { ticketNumber: tn, eventId } = parsed;
     setTicketNum(tn);
     setErr(null);
     setShowRaw(false);
@@ -102,7 +104,9 @@ export function CheckInPage() {
     setBusy(true);
 
     try {
-      const res  = await fetch(`/api/wix-checkin?ticket=${encodeURIComponent(tn)}`);
+      const params = new URLSearchParams({ ticket: tn });
+      if (eventId) params.set('eventId', eventId);
+      const res  = await fetch(`/api/wix-checkin?${params}`);
       const data = await res.json() as Record<string, unknown>;
       setRawResponse(data);
       if (!res.ok) {

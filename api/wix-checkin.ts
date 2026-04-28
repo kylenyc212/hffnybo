@@ -1,8 +1,15 @@
-// GET  /api/wix-checkin?ticket=AAAA-AAAA-BB021  → look up a Wix ticket
-// POST /api/wix-checkin  { ticketNumber }        → mark checked in
+// GET  /api/wix-checkin?ticket=AAAA-AAAA-BB021&eventId=xxx  → look up a Wix ticket
+// POST /api/wix-checkin  { ticketNumber, eventId? }          → mark checked in
 //
-// Uses the same WIX_API_KEY / WIX_ACCOUNT_ID / WIX_SITE_ID env vars
-// as the other Wix functions. Self-contained (no shared imports).
+// The Wix ticket QR code encodes:
+//   https://www.wixevents.com/check-in/{ticketNumber},{eventId}
+// Pass BOTH values here so we can try endpoint variants that require eventId.
+//
+// IMPORTANT: the Wix API key (WIX_API_KEY) must have these permissions:
+//   • Wix Events → "Read Guest List" (or "Read Event Tickets and Guest List")
+//   • Wix Events → "Manage Guest List"
+// If the key only has event-level permissions (for the sold-count sync), you
+// will get 400/403 on every ticket call. Update the key in the Wix dev portal.
 
 interface VReq {
   method?: string;
@@ -39,24 +46,52 @@ export default async function handler(req: VReq, res: VRes) {
     // ── GET: look up ticket ──────────────────────────────────────────────
     if (req.method === 'GET') {
       const ticketNumber = url.searchParams.get('ticket') ?? '';
+      const eventId      = url.searchParams.get('eventId') ?? '';
       if (!ticketNumber) {
         res.status(400).json({ error: 'ticket query param required' });
         return;
       }
 
-      const r = await fetch(
+      // Try the two most likely Wix endpoint shapes. The V1 API may require
+      // the eventId scoped in the path; try both and return whichever works.
+      const endpoints = [
+        // Shape 1: ticket number only (documented in Wix dev portal)
         `${WIX_BASE}/events/v1/tickets/${encodeURIComponent(ticketNumber)}`,
-        { headers }
-      );
-      const data = await r.json() as Record<string, unknown>;
-      if (!r.ok) {
-        res.status(r.status).json({
-          error: String((data as Record<string, unknown>).message ?? 'Wix lookup failed'),
-          raw: data,
-        });
-        return;
+        // Shape 2: scoped under event (common Wix pattern)
+        ...(eventId
+          ? [`${WIX_BASE}/events/v1/events/${encodeURIComponent(eventId)}/tickets/${encodeURIComponent(ticketNumber)}`]
+          : []),
+        // Shape 3: query via ticketNumber as query param
+        `${WIX_BASE}/events/v1/tickets?ticketNumber=${encodeURIComponent(ticketNumber)}`,
+      ];
+
+      let lastStatus = 0;
+      let lastBody: unknown = null;
+
+      for (const endpoint of endpoints) {
+        const r    = await fetch(endpoint, { headers });
+        const body = await r.json() as Record<string, unknown>;
+        lastStatus = r.status;
+        lastBody   = body;
+        if (r.ok) {
+          res.status(200).json({ ...body, _endpoint: endpoint });
+          return;
+        }
+        // 400 / 404 → try next shape; anything else (401, 403) → stop immediately
+        if (r.status !== 400 && r.status !== 404) break;
       }
-      res.status(200).json(data);
+
+      // All endpoints failed — return the last error with full detail
+      res.status(lastStatus || 502).json({
+        error: String((lastBody as Record<string, unknown>)?.message ?? 'Wix lookup failed'),
+        wixStatus: lastStatus,
+        raw: lastBody,
+        hint: lastStatus === 403 || lastStatus === 401
+          ? 'API key is missing "Read Guest List" / "Manage Guest List" permissions. Update it in the Wix developer portal.'
+          : lastStatus === 400
+          ? 'Wix returned 400 — ticket number may be invalid, or the API key lacks ticket permissions.'
+          : undefined,
+      });
       return;
     }
 
@@ -76,8 +111,12 @@ export default async function handler(req: VReq, res: VRes) {
       const data = await r.json() as Record<string, unknown>;
       if (!r.ok) {
         res.status(r.status).json({
-          error: String((data as Record<string, unknown>).message ?? 'Check-in failed'),
+          error: String(data.message ?? 'Check-in failed'),
+          wixStatus: r.status,
           raw: data,
+          hint: r.status === 403 || r.status === 401
+            ? 'API key is missing "Manage Guest List" permission.'
+            : undefined,
         });
         return;
       }
