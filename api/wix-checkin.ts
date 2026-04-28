@@ -47,6 +47,10 @@ export default async function handler(req: VReq, res: VRes) {
     const minHeaders  = wixHeaders(false, true);  // Authorization only — matches Wix docs curl examples
     const getHeaders  = wixHeaders(false, false); // Authorization + account/site headers
     const postHeaders = wixHeaders(true,  false); // + Content-Type for POST bodies
+    // Site-only: auth + wix-site-id but no wix-account-id (untried variant)
+    const key  = process.env.WIX_API_KEY    ?? '';
+    const site = process.env.WIX_SITE_ID    ?? '';
+    const siteOnlyHeaders: Record<string, string> = { Authorization: key, 'wix-site-id': site };
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     // ── GET: look up ticket ──────────────────────────────────────────────
@@ -69,7 +73,7 @@ export default async function handler(req: VReq, res: VRes) {
       gtParams.append('fieldset', 'TICKET_DETAILS');
       if (eventId) gtParams.set('event_id', eventId);
       const gtUrl = `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`;
-      for (const hdr of [minHeaders, getHeaders]) {
+      for (const hdr of [minHeaders, siteOnlyHeaders, getHeaders]) {
         const gtRes = await fetch(gtUrl, { headers: hdr });
         if (gtRes.ok) {
           const gtBody = await gtRes.json() as Record<string, unknown>;
@@ -116,35 +120,46 @@ export default async function handler(req: VReq, res: VRes) {
             } catch { /* name lookup failed — proceed without it */ }
           }
 
-          // Try to get ticket type name from the order (guest query doesn't include it)
+          // Fetch order to get ticket type name + definitive check-in status.
+          // Correct endpoint: /events/v1/events/{eventId}/orders/{orderNumber}
           let ticketName: string | null = null;
-          const orderNum = String(g.orderNumber ?? '');
-          if (orderNum) {
+          let orderCheckIn: Record<string, unknown> | null = null;
+          const orderNum  = String(g.orderNumber ?? '');
+          const gEventId  = String(g.eventId ?? eventId ?? '');
+          if (orderNum && gEventId) {
             try {
               const orRes = await fetch(
-                `${WIX_BASE}/events/v1/orders/${encodeURIComponent(orderNum)}`,
+                `${WIX_BASE}/events/v1/events/${encodeURIComponent(gEventId)}/orders/${encodeURIComponent(orderNum)}`,
                 { headers: getHeaders }
               );
               if (orRes.ok) {
                 const orBody = await orRes.json() as Record<string, unknown>;
-                const order = (orBody.order ?? orBody) as Record<string, unknown>;
-                const tickets = Array.isArray(order.tickets) ? order.tickets as Record<string, unknown>[] : [];
+                const order  = (orBody.order ?? orBody) as Record<string, unknown>;
+                const tickets = Array.isArray(order.tickets)
+                  ? order.tickets as Record<string, unknown>[]
+                  : [];
                 const matchedTicket = tickets.find(
                   (t) => t.ticketNumber === ticketNumber || t.ticketNumber === g.ticketNumber
                 ) ?? tickets[0];
-                if (matchedTicket?.name) ticketName = String(matchedTicket.name);
+                if (matchedTicket?.name)    ticketName   = String(matchedTicket.name);
+                if (matchedTicket?.checkIn) orderCheckIn = matchedTicket.checkIn as Record<string, unknown>;
               }
-            } catch { /* order lookup failed — proceed without ticket name */ }
+            } catch { /* order lookup failed — proceed without it */ }
           }
+
+          // "Already checked in" detection: prefer ticket-level checkIn from order;
+          // fall back to guest attendanceStatus (updates to ATTENDED after check-in).
+          const isAttended = g.attendanceStatus === 'ATTENDED';
+          const checkIn    = orderCheckIn ?? (isAttended ? { created: g.attendanceStatusUpdatedDate } : null);
 
           const ticket: Record<string, unknown> = {
             ticketNumber:  g.ticketNumber ?? ticketNumber,
-            eventId:       g.eventId,          // needed for check-in POST when no QR eventId
+            eventId:       gEventId,           // needed for check-in POST when no QR eventId
             orderFullName,
             guestDetails:  g.guestDetails ?? null,
             name:          ticketName ?? (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? null,
-            checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.attendanceStatusUpdatedDate } : null,
-            checkedIn:     g.attendanceStatus === 'ATTENDED',
+            checkIn,
+            checkedIn:     isAttended || orderCheckIn !== null,
             canceled:      addl?.archived === true,
             orderStatus:   addl?.orderStatus,
             _source:       'guests/query',
