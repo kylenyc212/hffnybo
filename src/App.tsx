@@ -4,6 +4,7 @@ import { CartPage } from './pages/CartPage';
 import { DrawerPage } from './pages/DrawerPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { AdminPage } from './pages/AdminPage';
+import { CheckInPage } from './pages/CheckInPage';
 import { LoginGate } from './components/LoginGate';
 import { SyncIndicator } from './components/SyncIndicator';
 import { useSession } from './lib/session';
@@ -22,6 +23,7 @@ export default function App() {
           <nav className="flex">
             <NavLink to="/catalog" className={tabClass}>Screenings</NavLink>
             <NavLink to="/cart" className={tabClass}>Cart</NavLink>
+            <NavLink to="/checkin" className={tabClass}>Check In</NavLink>
             <NavLink to="/drawer" className={tabClass}>Cash Drawer</NavLink>
             <NavLink to="/reports" className={tabClass}>Reports</NavLink>
             <NavLink to="/admin" className={tabClass}>Admin</NavLink>
@@ -54,6 +56,7 @@ export default function App() {
             <Route path="/cart" element={<CartPage />} />
             <Route path="/drawer" element={<DrawerPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/checkin" element={<CheckInPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Routes>
         </main>
