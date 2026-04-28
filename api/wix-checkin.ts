@@ -55,18 +55,25 @@ export default async function handler(req: VReq, res: VRes) {
         return;
       }
 
-      // Wix List Tickets: GET /events/v1/tickets?eventId=X&ticketNumber=Y
-      // fieldset params tell Wix to include guest + check-in details in response.
-      const fieldsets = 'fieldset=GUEST_DETAILS&fieldset=TICKET_DETAILS&fieldset=CHECK_IN';
+      // Wix List Tickets: GET /events/v1/tickets
+      // Try multiple param-name variants (Wix docs show both camelCase and snake_case in
+      // different places; fieldsets vary by API version too).
+      const tn  = encodeURIComponent(ticketNumber);
+      const eid = eventId ? encodeURIComponent(eventId) : '';
+      const fs  = 'fieldset=GUEST_DETAILS&fieldset=TICKET_DETAILS';
       const endpoints = [
-        // Shape 1: List Tickets with eventId + ticketNumber (official filter params, per docs)
-        ...(eventId
-          ? [`${WIX_BASE}/events/v1/tickets?eventId=${encodeURIComponent(eventId)}&ticketNumber=${encodeURIComponent(ticketNumber)}&${fieldsets}`]
-          : []),
-        // Shape 2: List Tickets by ticketNumber alone (no eventId)
-        `${WIX_BASE}/events/v1/tickets?ticketNumber=${encodeURIComponent(ticketNumber)}&${fieldsets}`,
-        // Shape 3: Get Ticket by path (ticketNumber as path param — may be an internal ID)
-        `${WIX_BASE}/events/v1/tickets/${encodeURIComponent(ticketNumber)}`,
+        // Shape 1a: camelCase params + eventId (most specific)
+        ...(eid ? [`${WIX_BASE}/events/v1/tickets?eventId=${eid}&ticketNumber=${tn}&${fs}`] : []),
+        // Shape 1b: snake_case params + eventId (some Wix doc examples use snake_case)
+        ...(eid ? [`${WIX_BASE}/events/v1/tickets?event_id=${eid}&ticket_number=${tn}&${fs}`] : []),
+        // Shape 2a: camelCase ticketNumber, no eventId
+        `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}&${fs}`,
+        // Shape 2b: no fieldsets at all (in case fieldset values cause the 400)
+        `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}`,
+        // Shape 2c: snake_case, no eventId
+        `${WIX_BASE}/events/v1/tickets?ticket_number=${tn}`,
+        // Shape 3: Get Ticket by path
+        `${WIX_BASE}/events/v1/tickets/${tn}`,
       ];
 
       let lastStatus = 0;
