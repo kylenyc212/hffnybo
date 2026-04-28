@@ -6,6 +6,7 @@ import { ReportsPage } from './pages/ReportsPage';
 import { AdminPage } from './pages/AdminPage';
 import { LoginGate } from './components/LoginGate';
 import { SyncIndicator } from './components/SyncIndicator';
+import { useSession } from './lib/session';
 
 const tabClass = ({ isActive }: { isActive: boolean }) =>
   `px-4 py-3 text-sm font-semibold tracking-wide ${
@@ -13,6 +14,7 @@ const tabClass = ({ isActive }: { isActive: boolean }) =>
   }`;
 
 export default function App() {
+  const { user, signOut } = useSession();
   return (
     <LoginGate>
       <div className="flex flex-col h-full">
@@ -26,7 +28,23 @@ export default function App() {
           </nav>
           <div className="flex items-center gap-3 px-4">
             <SyncIndicator />
-            <span className="text-xs text-slate-400">HFFNY Box Office</span>
+            {user && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 hidden sm:inline">
+                  {user.name}
+                  {user.role !== 'cashier' && (
+                    <span className="ml-1 text-slate-500">({user.role.replace('_', ' ')})</span>
+                  )}
+                </span>
+                <button
+                  onClick={signOut}
+                  className="text-xs text-slate-500 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded"
+                  title="Sign out"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
         </header>
         <main className="flex-1 overflow-auto">
