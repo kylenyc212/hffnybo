@@ -1,9 +1,12 @@
 // GET  /api/wix-checkin?ticket=AAAA-AAAA-BB021&eventId=xxx  → look up a Wix ticket
-// POST /api/wix-checkin  { ticketNumber, eventId? }          → mark checked in
+// POST /api/wix-checkin  { ticketNumber, eventId }           → mark checked in
 //
 // The Wix ticket QR code encodes:
 //   https://www.wixevents.com/check-in/{ticketNumber},{eventId}
-// Pass BOTH values here so we can try endpoint variants that require eventId.
+// Both values are required by the Wix API — always pass both.
+//
+// Wix POST body shape (per official docs):
+//   { eventId: string, ticketNumber: string[] }   ← "ticketNumber" not "ticketNumbers"
 //
 // IMPORTANT: the Wix API key (WIX_API_KEY) must have these permissions:
 //   • Wix Events → "Read Guest List" (or "Read Event Tickets and Guest List")
@@ -52,17 +55,18 @@ export default async function handler(req: VReq, res: VRes) {
         return;
       }
 
-      // Try the two most likely Wix endpoint shapes. The V1 API may require
-      // the eventId scoped in the path; try both and return whichever works.
+      // Wix List Tickets: GET /events/v1/tickets?eventId=X&ticketNumber=Y
+      // fieldset params tell Wix to include guest + check-in details in response.
+      const fieldsets = 'fieldset=GUEST_DETAILS&fieldset=TICKET_DETAILS&fieldset=CHECK_IN';
       const endpoints = [
-        // Shape 1: ticket number only (documented in Wix dev portal)
-        `${WIX_BASE}/events/v1/tickets/${encodeURIComponent(ticketNumber)}`,
-        // Shape 2: scoped under event (common Wix pattern)
+        // Shape 1: List Tickets with eventId + ticketNumber (official filter params, per docs)
         ...(eventId
-          ? [`${WIX_BASE}/events/v1/events/${encodeURIComponent(eventId)}/tickets/${encodeURIComponent(ticketNumber)}`]
+          ? [`${WIX_BASE}/events/v1/tickets?eventId=${encodeURIComponent(eventId)}&ticketNumber=${encodeURIComponent(ticketNumber)}&${fieldsets}`]
           : []),
-        // Shape 3: query via ticketNumber as query param
-        `${WIX_BASE}/events/v1/tickets?ticketNumber=${encodeURIComponent(ticketNumber)}`,
+        // Shape 2: List Tickets by ticketNumber alone (no eventId)
+        `${WIX_BASE}/events/v1/tickets?ticketNumber=${encodeURIComponent(ticketNumber)}&${fieldsets}`,
+        // Shape 3: Get Ticket by path (ticketNumber as path param — may be an internal ID)
+        `${WIX_BASE}/events/v1/tickets/${encodeURIComponent(ticketNumber)}`,
       ];
 
       let lastStatus = 0;
@@ -74,7 +78,19 @@ export default async function handler(req: VReq, res: VRes) {
         lastStatus = r.status;
         lastBody   = body;
         if (r.ok) {
-          res.status(200).json({ ...body, _endpoint: endpoint });
+          // List Tickets returns { tickets: [...] }; normalize to { ticket: {...} }
+          // so the frontend can use a consistent shape regardless of which endpoint succeeded.
+          const ticketsArr = Array.isArray(body.tickets) ? body.tickets as Record<string, unknown>[] : null;
+          const ticket = ticketsArr
+            ? (ticketsArr[0] ?? null)
+            : (body.ticket as Record<string, unknown> | undefined ?? body);
+          if (ticketsArr && ticketsArr.length === 0) {
+            // Endpoint responded 200 but no tickets matched — treat as not found
+            lastStatus = 404;
+            lastBody   = { message: 'Ticket not found for that number/event combination' };
+            continue;
+          }
+          res.status(200).json({ ticket, _endpoint: endpoint, _raw: body });
           return;
         }
         // 400 / 404 → try next shape; anything else (401, 403) → stop immediately
@@ -86,11 +102,6 @@ export default async function handler(req: VReq, res: VRes) {
         error: String((lastBody as Record<string, unknown>)?.message ?? 'Wix lookup failed'),
         wixStatus: lastStatus,
         raw: lastBody,
-        hint: lastStatus === 403 || lastStatus === 401
-          ? 'API key is missing "Read Guest List" / "Manage Guest List" permissions. Update it in the Wix developer portal.'
-          : lastStatus === 400
-          ? 'Wix returned 400 — ticket number may be invalid, or the API key lacks ticket permissions.'
-          : undefined,
       });
       return;
     }
@@ -98,15 +109,22 @@ export default async function handler(req: VReq, res: VRes) {
     // ── POST: check in ──────────────────────────────────────────────────
     if (req.method === 'POST') {
       const ticketNumber = String(req.body?.ticketNumber ?? '').trim();
+      const eventId      = String(req.body?.eventId      ?? '').trim();
       if (!ticketNumber) {
         res.status(400).json({ error: 'ticketNumber required in request body' });
         return;
       }
+      if (!eventId) {
+        res.status(400).json({ error: 'eventId required in request body — scan the full QR code URL, not just the ticket number' });
+        return;
+      }
 
+      // Wix API shape: { eventId: string, ticketNumber: string[] }
+      // Note: field is "ticketNumber" (array), NOT "ticketNumbers"
       const r = await fetch(`${WIX_BASE}/events/v1/tickets/check-in`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ticketNumbers: [ticketNumber] }),
+        body: JSON.stringify({ eventId, ticketNumber: [ticketNumber] }),
       });
       const data = await r.json() as Record<string, unknown>;
       if (!r.ok) {

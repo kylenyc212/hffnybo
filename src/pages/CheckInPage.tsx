@@ -8,11 +8,14 @@ interface WixTicket {
   ticketNumber?: string;
   guestFullName?: string;
   orderFullName?: string;
+  // guestDetails sub-object returned by List Tickets with GUEST_DETAILS fieldset
+  guestDetails?: { firstName?: string; lastName?: string; email?: string } | null;
   name?: string;
   checkIn?: { created?: string } | null;
   checkedIn?: boolean;
   status?: string;
   canceled?: boolean;
+  archived?: boolean;
   [key: string]: unknown;
 }
 
@@ -45,6 +48,7 @@ export function CheckInPage() {
   const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [ticketNum, setTicketNum] = useState('');
+  const [eventId, setEventId]   = useState('');   // from QR — required by Wix check-in POST
   const [err, setErr]         = useState<string | null>(null);
   const [manual, setManual]   = useState('');
   const [busy, setBusy]       = useState(false);
@@ -96,8 +100,9 @@ export function CheckInPage() {
     const parsed = parseQr(raw);
     if (!parsed) { setErr('Could not read a ticket number from that QR code.'); return; }
 
-    const { ticketNumber: tn, eventId } = parsed;
+    const { ticketNumber: tn, eventId: eid } = parsed;
     setTicketNum(tn);
+    setEventId(eid);   // persist so doCheckIn can include it in the POST
     setErr(null);
     setShowRaw(false);
     setPhase('lookup');
@@ -114,6 +119,7 @@ export function CheckInPage() {
         setPhase('scan');
         return;
       }
+      // API normalizes to { ticket: {...} } regardless of which Wix endpoint matched
       const t = (data.ticket ?? data) as WixTicket;
       setTicket({ ...t, ticketNumber: t.ticketNumber ?? tn });
       setPhase('review');
@@ -128,13 +134,17 @@ export function CheckInPage() {
   async function doCheckIn() {
     const tn = ticket?.ticketNumber ?? ticketNum;
     if (!tn) return;
+    if (!eventId) {
+      setErr('Event ID is missing — scan the full QR code from the ticket (not just the ticket number).');
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
       const res  = await fetch('/api/wix-checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketNumber: tn }),
+        body: JSON.stringify({ ticketNumber: tn, eventId }),
       });
       const data = await res.json() as Record<string, unknown>;
       if (!res.ok) {
@@ -156,6 +166,7 @@ export function CheckInPage() {
     setRawResponse(null);
     setShowRaw(false);
     setTicketNum('');
+    setEventId('');
     setErr(null);
     setManual('');
     setBusy(false);
@@ -164,7 +175,10 @@ export function CheckInPage() {
 
   if (!user) return <div className="p-6 text-slate-400">Sign in first.</div>;
 
-  const guestName  = ticket?.guestFullName ?? ticket?.orderFullName ?? '—';
+  const guestDetailsName = ticket?.guestDetails
+    ? [ticket.guestDetails.firstName, ticket.guestDetails.lastName].filter(Boolean).join(' ')
+    : null;
+  const guestName  = ticket?.guestFullName ?? ticket?.orderFullName ?? guestDetailsName ?? '—';
   const ticketType = ticket?.name ?? 'Ticket';
   const alreadyIn  = ticket ? detectCheckedIn(ticket) : false;
   const isCanceled = !!ticket?.canceled;
@@ -253,6 +267,7 @@ export function CheckInPage() {
             <div className="text-slate-300 text-lg">{ticketType}</div>
             <div className="text-xs text-slate-500 font-mono mt-3">
               {ticket.ticketNumber ?? ticketNum}
+              {eventId && <span className="block text-slate-600">{eventId}</span>}
             </div>
           </div>
 
