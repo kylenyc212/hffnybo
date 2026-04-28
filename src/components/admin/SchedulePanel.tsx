@@ -51,6 +51,7 @@ export function SchedulePanel() {
               </div>
               <div className="text-xs text-slate-400">
                 cap {s.capacity}{s.is_free ? ' · FREE' : ''}{s.online_sold ? ` · ${s.online_sold} online` : ''}
+                {s.wix_event_id && <span className="ml-1 text-emerald-400">· wix↔</span>}
                 <span className="ml-2">{expanded === s.id ? '▾' : '▸'}</span>
               </div>
             </button>
@@ -151,11 +152,20 @@ function ScreeningEditor({
           />
         </label>
         <label>
-          <div className="text-xs text-slate-400 mb-1">Online tickets sold (Wix)</div>
+          <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
+            <span>Online tickets sold (Wix)</span>
+            {existing?.wix_event_id && (
+              <span className="text-[10px] text-emerald-400 font-normal">
+                auto-synced from Wix
+              </span>
+            )}
+          </div>
           <input
             type="number" min="0"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 disabled:opacity-60"
             value={online}
+            disabled={!!existing?.wix_event_id}
+            title={existing?.wix_event_id ? 'Mapped to Wix — managed by sync. Edit the mapping in Admin → Wix sync.' : ''}
             onChange={(e) => setOnline(Math.max(0, parseInt(e.target.value || '0', 10)))}
           />
         </label>

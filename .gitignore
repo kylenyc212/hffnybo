@@ -3,6 +3,8 @@ dist
 dist-ssr
 *.local
 *.tsbuildinfo
+scripts/portico-test-output-*
+scripts/wix-probe-output-*
 .env
 .env.local
 .env.*.local

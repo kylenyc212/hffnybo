@@ -15,6 +15,8 @@ export interface ScreeningRow {
   is_free: boolean;
   is_always_available: boolean;
   short_code: string | null;
+  wix_event_id: string | null;
+  wix_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }
