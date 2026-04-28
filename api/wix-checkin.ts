@@ -26,29 +26,27 @@ interface VRes {
 
 const WIX_BASE = 'https://www.wixapis.com';
 
-function wixHeaders(includeContentType = false): Record<string, string> {
+function wixHeaders(includeContentType = false, minimal = false): Record<string, string> {
   const key     = process.env.WIX_API_KEY     ?? '';
   const account = process.env.WIX_ACCOUNT_ID  ?? '';
   const site    = process.env.WIX_SITE_ID     ?? '';
   if (!key || !account || !site) {
     throw new Error('Missing WIX_API_KEY, WIX_ACCOUNT_ID, or WIX_SITE_ID env vars');
   }
-  const h: Record<string, string> = {
-    Authorization:    key,
-    'wix-account-id': account,
-    'wix-site-id':    site,
-  };
-  // Only add Content-Type for requests with a body (POST/PUT).
-  // Sending Content-Type: application/json on GET requests with no body
-  // causes some Wix endpoints to return 400.
+  // minimal=true: only Authorization, matching the Wix docs curl examples exactly.
+  // Some v1 endpoints return 400 when extra headers (wix-account-id) are present.
+  const h: Record<string, string> = minimal
+    ? { Authorization: key }
+    : { Authorization: key, 'wix-account-id': account, 'wix-site-id': site };
   if (includeContentType) h['Content-Type'] = 'application/json';
   return h;
 }
 
 export default async function handler(req: VReq, res: VRes) {
   try {
-    const getHeaders  = wixHeaders(false);  // no Content-Type — GET requests have no body
-    const postHeaders = wixHeaders(true);   // Content-Type: application/json for POST
+    const minHeaders  = wixHeaders(false, true);  // Authorization only — matches Wix docs curl examples
+    const getHeaders  = wixHeaders(false, false); // Authorization + account/site headers
+    const postHeaders = wixHeaders(true,  false); // + Content-Type for POST bodies
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     // ── GET: look up ticket ──────────────────────────────────────────────
@@ -64,23 +62,25 @@ export default async function handler(req: VReq, res: VRes) {
       const eid = eventId ? encodeURIComponent(eventId) : '';
 
       // ── Strategy A: GET /events/v1/tickets/{ticketNumber}
-      // Returns full ticket with guestDetails (name, email) and checkIn timestamp.
-      // NOTE: query param is event_id (snake_case), not eventId — per official docs curl example.
-      // Fieldsets GUEST_DETAILS + TICKET_DETAILS needed to get name and guest info.
-      const gtParams = new URLSearchParams({ fieldset: 'GUEST_DETAILS' });
+      // Try twice: once with minimal headers (Authorization only, matching docs curl example),
+      // once with full headers. Both use event_id (snake_case per docs) + fieldsets.
+      const gtParams = new URLSearchParams();
+      gtParams.append('fieldset', 'GUEST_DETAILS');
       gtParams.append('fieldset', 'TICKET_DETAILS');
       if (eventId) gtParams.set('event_id', eventId);
-      const gtRes = await fetch(`${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`, { headers: getHeaders });
-      if (gtRes.ok) {
-        const gtBody = await gtRes.json() as Record<string, unknown>;
-        // Response may be the ticket directly or wrapped in { ticket: {...} }
-        const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
-        res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
-        return;
+      const gtUrl = `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`;
+      for (const hdr of [minHeaders, getHeaders]) {
+        const gtRes = await fetch(gtUrl, { headers: hdr });
+        if (gtRes.ok) {
+          const gtBody = await gtRes.json() as Record<string, unknown>;
+          const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
+          res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
+          return;
+        }
       }
 
-      // ── Strategy B: POST /events/v2/guests/query (filter by ticketNumber)
-      // Returns limited fields (no name) but reliably finds the ticket.
+      // ── Strategy B: POST /events/v2/guests/query → then CRM contact lookup for name
+      // Guest query reliably finds the ticket; contacts API gives us the name.
       const guestFilter: Record<string, unknown> = { ticketNumber: { $eq: ticketNumber } };
       if (eventId) guestFilter.eventId = { $eq: eventId };
       const gqRes = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
@@ -94,9 +94,31 @@ export default async function handler(req: VReq, res: VRes) {
         if (guests.length > 0) {
           const g = guests[0];
           const addl = g.additionalDetails as Record<string, unknown> | undefined;
+
+          // Try to fetch the guest name from the CRM contacts API using contactId
+          let orderFullName: string | null = (g.fullName as string | undefined) ?? null;
+          if (!orderFullName && g.contactId) {
+            try {
+              const cRes = await fetch(
+                `${WIX_BASE}/contacts/v4/contacts/${encodeURIComponent(String(g.contactId))}`,
+                { headers: getHeaders }
+              );
+              if (cRes.ok) {
+                const cBody = await cRes.json() as Record<string, unknown>;
+                const info = (cBody.contact as Record<string, unknown> | undefined)?.info as Record<string, unknown> | undefined;
+                const nameObj = info?.name as Record<string, unknown> | undefined;
+                if (nameObj?.full) {
+                  orderFullName = String(nameObj.full);
+                } else if (nameObj?.first || nameObj?.last) {
+                  orderFullName = [nameObj.first, nameObj.last].filter(Boolean).join(' ');
+                }
+              }
+            } catch { /* name lookup failed — proceed without it */ }
+          }
+
           const ticket: Record<string, unknown> = {
             ticketNumber:  g.ticketNumber ?? ticketNumber,
-            orderFullName: g.fullName ?? null,
+            orderFullName,
             guestDetails:  g.guestDetails ?? null,
             name:          (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? null,
             checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.attendanceStatusUpdatedDate } : null,
