@@ -26,31 +26,27 @@ interface VRes {
 
 const WIX_BASE = 'https://www.wixapis.com';
 
-function wixHeaders(includeContentType = false, minimal = false): Record<string, string> {
+function wixHeaders(includeContentType = false): Record<string, string> {
   const key     = process.env.WIX_API_KEY     ?? '';
   const account = process.env.WIX_ACCOUNT_ID  ?? '';
   const site    = process.env.WIX_SITE_ID     ?? '';
   if (!key || !account || !site) {
     throw new Error('Missing WIX_API_KEY, WIX_ACCOUNT_ID, or WIX_SITE_ID env vars');
   }
-  // minimal=true: only Authorization, matching the Wix docs curl examples exactly.
-  // Some v1 endpoints return 400 when extra headers (wix-account-id) are present.
-  const h: Record<string, string> = minimal
-    ? { Authorization: key }
-    : { Authorization: key, 'wix-account-id': account, 'wix-site-id': site };
+  // All three headers required — Authorization alone returns 403 on v1 ticket endpoints.
+  const h: Record<string, string> = {
+    Authorization:    key,
+    'wix-account-id': account,
+    'wix-site-id':    site,
+  };
   if (includeContentType) h['Content-Type'] = 'application/json';
   return h;
 }
 
 export default async function handler(req: VReq, res: VRes) {
   try {
-    const minHeaders  = wixHeaders(false, true);  // Authorization only — matches Wix docs curl examples
-    const getHeaders  = wixHeaders(false, false); // Authorization + account/site headers
-    const postHeaders = wixHeaders(true,  false); // + Content-Type for POST bodies
-    // Site-only: auth + wix-site-id but no wix-account-id (untried variant)
-    const key  = process.env.WIX_API_KEY    ?? '';
-    const site = process.env.WIX_SITE_ID    ?? '';
-    const siteOnlyHeaders: Record<string, string> = { Authorization: key, 'wix-site-id': site };
+    const getHeaders  = wixHeaders(false); // Authorization + wix-account-id + wix-site-id (no Content-Type)
+    const postHeaders = wixHeaders(true);  // same + Content-Type for POST bodies
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     // ── GET: look up ticket ──────────────────────────────────────────────
@@ -65,30 +61,23 @@ export default async function handler(req: VReq, res: VRes) {
       const tn  = encodeURIComponent(ticketNumber);
       const eid = eventId ? encodeURIComponent(eventId) : '';
 
-      // ── Strategy A: GET ticket — try multiple path shapes + header variants
-      // Flat path (/events/v1/tickets/{tn}) consistently returns 400 for unknown reasons.
-      // Event-scoped path (/events/v1/events/{eid}/tickets/{tn}) follows the same
-      // pattern as the working order endpoint and may behave differently.
+      // ── Strategy A: GET /events/v1/tickets/{ticketNumber}
+      // Confirmed working via terminal test: requires ALL THREE headers
+      // (Authorization + wix-account-id + wix-site-id). Auth-only → 403.
+      // Returns full ticket: name, guestFullName, checkIn timestamp, etc.
       const gtParams = new URLSearchParams();
       gtParams.append('fieldset', 'GUEST_DETAILS');
       gtParams.append('fieldset', 'TICKET_DETAILS');
       if (eventId) gtParams.set('event_id', eventId);
-      const gtUrls = [
-        // Event-scoped path (new — same pattern as working order endpoint)
-        ...(eid ? [`${WIX_BASE}/events/v1/events/${eid}/tickets/${tn}`] : []),
-        // Flat path with fieldsets + event_id
+      const gtRes = await fetch(
         `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`,
-      ];
-      for (const gtUrl of gtUrls) {
-        for (const hdr of [minHeaders, siteOnlyHeaders, getHeaders]) {
-          const gtRes = await fetch(gtUrl, { headers: hdr });
-          if (gtRes.ok) {
-            const gtBody = await gtRes.json() as Record<string, unknown>;
-            const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
-            res.status(200).json({ ticket, _endpoint: gtUrl, _raw: gtBody });
-            return;
-          }
-        }
+        { headers: getHeaders }   // all three: Authorization + wix-account-id + wix-site-id
+      );
+      if (gtRes.ok) {
+        const gtBody = await gtRes.json() as Record<string, unknown>;
+        const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
+        res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
+        return;
       }
 
       // ── Strategy B: POST /events/v2/guests/query → then CRM contact lookup for name
