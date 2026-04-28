@@ -65,8 +65,12 @@ export default async function handler(req: VReq, res: VRes) {
 
       // ── Strategy A: GET /events/v1/tickets/{ticketNumber}
       // Returns full ticket with guestDetails (name, email) and checkIn timestamp.
-      // No Content-Type header on GETs — that was causing the 400s before.
-      const gtRes = await fetch(`${WIX_BASE}/events/v1/tickets/${tn}`, { headers: getHeaders });
+      // NOTE: query param is event_id (snake_case), not eventId — per official docs curl example.
+      // Fieldsets GUEST_DETAILS + TICKET_DETAILS needed to get name and guest info.
+      const gtParams = new URLSearchParams({ fieldset: 'GUEST_DETAILS' });
+      gtParams.append('fieldset', 'TICKET_DETAILS');
+      if (eventId) gtParams.set('event_id', eventId);
+      const gtRes = await fetch(`${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`, { headers: getHeaders });
       if (gtRes.ok) {
         const gtBody = await gtRes.json() as Record<string, unknown>;
         // Response may be the ticket directly or wrapped in { ticket: {...} }
