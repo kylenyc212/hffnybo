@@ -98,13 +98,10 @@ export function CatalogPage() {
           {grouped.map(([dayKey]) => (
             <button
               key={dayKey}
-              onClick={() => {
-                const el = document.getElementById(`day-${dayKey}`);
-                if (el) {
-                  const top = el.getBoundingClientRect().top + window.scrollY - 80;
-                  window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-                }
-              }}
+              onClick={() =>
+                document.getElementById(`day-${dayKey}`)
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
               className="text-sm bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg font-semibold"
             >
               {shortDay(dayKey)}
@@ -136,7 +133,7 @@ export function CatalogPage() {
       ) : (
         <div className="space-y-6">
           {grouped.map(([dayKey, list]) => (
-            <section key={dayKey} id={`day-${dayKey}`}>
+            <section key={dayKey} id={`day-${dayKey}`} className="scroll-mt-16">
               <h2 className="text-sm uppercase tracking-wide text-slate-400 mb-2 sticky top-14 bg-slate-900 py-1">
                 {fmtDayHeader(list[0].starts_at)}
               </h2>

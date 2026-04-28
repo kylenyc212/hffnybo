@@ -20,11 +20,11 @@ export default function App() {
     <LoginGate>
       <div className="flex flex-col h-full">
         <header className="flex items-center justify-between bg-slate-950 border-b border-slate-800">
-          <nav className="flex">
+          <nav className="flex overflow-x-auto shrink min-w-0">
             <NavLink to="/catalog" className={tabClass}>Screenings</NavLink>
             <NavLink to="/cart" className={tabClass}>Cart</NavLink>
             <NavLink to="/checkin" className={tabClass}>Check In</NavLink>
-            <NavLink to="/drawer" className={tabClass}>Cash Drawer</NavLink>
+            <NavLink to="/drawer" className={tabClass}>Drawer</NavLink>
             <NavLink to="/reports" className={tabClass}>Reports</NavLink>
             <NavLink to="/admin" className={tabClass}>Admin</NavLink>
           </nav>
