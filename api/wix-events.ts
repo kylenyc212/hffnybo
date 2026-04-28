@@ -79,7 +79,8 @@ async function listUpcomingWixEvents(): Promise<WixEvent[]> {
         filter: { status: { $in: ['UPCOMING', 'STARTED'] } },
         paging: { limit: 100, offset }
       },
-      fields: ['DETAILS', 'TEXTS', 'REGISTRATION']
+      // DASHBOARD is required for `summaries.tickets.ticketsSold` to come back.
+      fields: ['DETAILS', 'TEXTS', 'REGISTRATION', 'DASHBOARD']
     });
     const batch = (data.events as WixEvent[] | undefined) ?? [];
     all.push(...batch);
