@@ -70,20 +70,26 @@ export function ScreeningCard({ screening, onSold }: Props) {
 
   return (
     <div className={`bg-slate-800 border rounded-xl p-3 ${alwaysAvailable ? 'border-amber-700' : 'border-slate-700'}`}>
+
+      {/* Title row: title — time  SKU  [capacity] */}
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
           <div className="text-base sm:text-lg font-semibold break-words leading-snug">
             {screening.title}
             {!alwaysAvailable && (
-              <span className="text-slate-400 font-normal"> — {fmtTime(screening.starts_at)}</span>
+              <>
+                <span className="text-slate-400 font-normal"> — {fmtTime(screening.starts_at)}</span>
+                {screening.short_code && (
+                  <span className="text-[11px] text-slate-500 font-mono font-normal ml-2">
+                    {screening.short_code}
+                  </span>
+                )}
+              </>
             )}
             {screening.is_free && (
               <span className="ml-2 text-xs bg-emerald-700 text-white px-2 py-0.5 rounded align-middle">FREE</span>
             )}
           </div>
-          {screening.short_code && !alwaysAvailable && (
-            <div className="text-[10px] text-slate-500 font-mono mt-0.5">Heartland: {screening.short_code}</div>
-          )}
         </div>
         {!alwaysAvailable && (
           <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
@@ -93,8 +99,11 @@ export function ScreeningCard({ screening, onSold }: Props) {
         )}
       </div>
 
-      {paid.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+      {/* ── Paid tickets ── 4 across
+          Always-available items (passes, merch): just the ticket type buttons.
+          Regular screenings: ticket types + "Other" button at the end. */}
+      {(paid.length > 0 || !alwaysAvailable) && (
+        <div className={`grid gap-2 mb-2 ${alwaysAvailable ? 'grid-cols-4' : 'grid-cols-2 sm:grid-cols-4'}`}>
           {paid.map((t) => (
             <button
               key={t.id}
@@ -106,11 +115,59 @@ export function ScreeningCard({ screening, onSold }: Props) {
               <div className="font-bold">{money(t.price_cents)}</div>
             </button>
           ))}
+          {/* Other button — sits inline with paid types; expands a form below */}
+          {!alwaysAvailable && (
+            <button
+              onClick={() => setOtherOpen(!otherOpen)}
+              className={`rounded-lg px-3 py-3 text-left border transition-colors ${
+                otherOpen
+                  ? 'bg-slate-700 border-slate-500 text-white'
+                  : 'bg-slate-900 border-slate-600 hover:bg-slate-700 text-slate-300'
+              }`}
+            >
+              <div className="text-xs text-slate-400">Other</div>
+              <div className="font-semibold text-sm">Custom…</div>
+            </button>
+          )}
         </div>
       )}
 
+      {/* Other / custom ticket inline form */}
+      {!alwaysAvailable && otherOpen && (
+        <div className="mb-2 bg-slate-900 border border-slate-600 rounded-lg p-3 grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
+          <input
+            className="sm:col-span-3 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+            placeholder="Label (e.g. Sponsor comp)"
+            value={otherLabel}
+            onChange={(e) => setOtherLabel(e.target.value)}
+          />
+          <input
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+            type="number" step="0.01" min="0" inputMode="decimal"
+            placeholder="$"
+            value={otherAmount}
+            onChange={(e) => setOtherAmount(e.target.value)}
+          />
+          <input
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+            type="number" min="1" inputMode="numeric"
+            placeholder="Qty"
+            value={otherQty}
+            onChange={(e) => setOtherQty(Math.max(1, parseInt(e.target.value || '1', 10)))}
+          />
+          <button
+            onClick={addOther}
+            className="bg-brand hover:bg-brand-dark text-white font-semibold rounded-lg py-2"
+          >
+            Add
+          </button>
+        </div>
+      )}
+
+      {/* ── Comp tickets ── 4 across
+          Scan button appears only for regular screenings (not pass/merch sales). */}
       {comps.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+        <div className="grid grid-cols-4 gap-2 mb-2">
           {comps.map((t) => (
             <button
               key={t.id}
@@ -124,50 +181,15 @@ export function ScreeningCard({ screening, onSold }: Props) {
               </div>
             </button>
           ))}
-          <button
-            onClick={() => setScanOpen(true)}
-            className="bg-emerald-800 hover:bg-emerald-700 border border-emerald-700 rounded-lg px-3 py-3 text-left"
-          >
-            <div className="text-xs text-emerald-200">Pass</div>
-            <div className="font-semibold text-sm">Scan ▸</div>
-          </button>
-        </div>
-      )}
-
-      <button
-        onClick={() => setOtherOpen(!otherOpen)}
-        className="text-xs text-slate-400 hover:text-slate-200 mt-1"
-      >
-        {otherOpen ? '− Hide Other' : '+ Other (custom ticket)'}
-      </button>
-      {otherOpen && (
-        <div className="mt-2 grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
-          <input
-            className="sm:col-span-3 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
-            placeholder="Label (e.g. Sponsor comp)"
-            value={otherLabel}
-            onChange={(e) => setOtherLabel(e.target.value)}
-          />
-          <input
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
-            type="number" step="0.01" min="0" inputMode="decimal"
-            placeholder="$"
-            value={otherAmount}
-            onChange={(e) => setOtherAmount(e.target.value)}
-          />
-          <input
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2"
-            type="number" min="1" inputMode="numeric"
-            placeholder="Qty"
-            value={otherQty}
-            onChange={(e) => setOtherQty(Math.max(1, parseInt(e.target.value || '1', 10)))}
-          />
-          <button
-            onClick={addOther}
-            className="bg-brand hover:bg-brand-dark text-white font-semibold rounded-lg py-2"
-          >
-            Add
-          </button>
+          {!alwaysAvailable && (
+            <button
+              onClick={() => setScanOpen(true)}
+              className="bg-emerald-800 hover:bg-emerald-700 border border-emerald-700 rounded-lg px-3 py-3 text-left"
+            >
+              <div className="text-xs text-emerald-200">Pass</div>
+              <div className="font-semibold text-sm">Scan ▸</div>
+            </button>
+          )}
         </div>
       )}
 

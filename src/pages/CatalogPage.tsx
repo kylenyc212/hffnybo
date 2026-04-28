@@ -8,6 +8,12 @@ import { ScreeningCard } from '../components/ScreeningCard';
 const FESTIVAL_FROM = '2026-05-01';
 const FESTIVAL_TO = '2026-05-07';
 
+/** Short label for date-jump buttons: "May 1", "May 2", etc. */
+function shortDay(dayKey: string) {
+  const [, m, d] = dayKey.split('-').map(Number);
+  return `${['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]} ${d}`;
+}
+
 export function CatalogPage() {
   const [screenings, setScreenings] = useState<ScreeningWithSold[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +81,8 @@ export function CatalogPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-4 gap-4 sticky top-0 bg-slate-900 py-2 z-10">
+      {/* Sticky top bar — title + cart only */}
+      <div className="flex items-center justify-between mb-2 gap-4 sticky top-0 bg-slate-900 py-2 z-10">
         <h1 className="text-2xl font-bold">Screenings</h1>
         <Link
           to="/cart"
@@ -85,6 +92,27 @@ export function CatalogPage() {
         </Link>
       </div>
 
+      {/* Date-jump buttons — scroll to each day's section */}
+      {grouped.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {grouped.map(([dayKey]) => (
+            <button
+              key={dayKey}
+              onClick={() => {
+                const el = document.getElementById(`day-${dayKey}`);
+                if (el) {
+                  const top = el.getBoundingClientRect().top + window.scrollY - 80;
+                  window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+                }
+              }}
+              className="text-sm bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg font-semibold"
+            >
+              {shortDay(dayKey)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <input
         className="w-full mb-4 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
         placeholder="Search title…"
@@ -92,11 +120,9 @@ export function CatalogPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      {/* Always-available items (passes, merch) — no section label */}
       {alwaysAvailable.length > 0 && (
         <section className="mb-6">
-          <h2 className="text-sm uppercase tracking-wide text-amber-400 mb-2 sticky top-14 bg-slate-900 py-1">
-            Festival-wide
-          </h2>
           <div className="space-y-3">
             {alwaysAvailable.map((s) => (
               <ScreeningCard key={s.id} screening={s} onSold={bumpSold} />
@@ -110,7 +136,7 @@ export function CatalogPage() {
       ) : (
         <div className="space-y-6">
           {grouped.map(([dayKey, list]) => (
-            <section key={dayKey}>
+            <section key={dayKey} id={`day-${dayKey}`}>
               <h2 className="text-sm uppercase tracking-wide text-slate-400 mb-2 sticky top-14 bg-slate-900 py-1">
                 {fmtDayHeader(list[0].starts_at)}
               </h2>
