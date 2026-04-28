@@ -73,12 +73,16 @@ export default async function handler(req: VReq, res: VRes) {
         `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`,
         { headers: getHeaders }   // all three: Authorization + wix-account-id + wix-site-id
       );
+      // Capture failure details so Strategy B can include them in debug output.
+      let strategyADebug: unknown = null;
       if (gtRes.ok) {
         const gtBody = await gtRes.json() as Record<string, unknown>;
         const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
         res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
         return;
       }
+      try { strategyADebug = { status: gtRes.status, body: await gtRes.json() }; }
+      catch  { strategyADebug = { status: gtRes.status }; }
 
       // ── Strategy B: POST /events/v2/guests/query → then CRM contact lookup for name
       // Guest query reliably finds the ticket; contacts API gives us the name.
@@ -152,6 +156,27 @@ export default async function handler(req: VReq, res: VRes) {
             }
           }
 
+          // If we still have no ticket name (e.g. comp/add-guest tickets whose order
+          // has tickets:[]), try the list-tickets endpoint filtered by ticketNumber.
+          // This is a different code path from Strategy A and often succeeds when the
+          // specific-ticket GET fails.
+          if (!ticketName && gEventId) {
+            try {
+              const ltParams = new URLSearchParams();
+              ltParams.set('eventId', gEventId);
+              ltParams.set('ticketNumber', ticketNumber);
+              const ltRes = await fetch(`${WIX_BASE}/events/v1/tickets?${ltParams}`, { headers: getHeaders });
+              if (ltRes.ok) {
+                const ltBody = await ltRes.json() as Record<string, unknown>;
+                const ltTickets = Array.isArray(ltBody.tickets) ? ltBody.tickets as Record<string, unknown>[] : [];
+                const ltMatch = ltTickets.find((t) => t.ticketNumber === ticketNumber) ?? ltTickets[0];
+                if (ltMatch?.name) ticketName = String(ltMatch.name);
+                // Also grab check-in from the list result if not already set
+                if (!orderCheckIn && ltMatch?.checkIn) orderCheckIn = ltMatch.checkIn as Record<string, unknown>;
+              }
+            } catch { /* ignore */ }
+          }
+
           // "Already checked in" detection: prefer ticket-level checkIn from order;
           // fall back to guest attendanceStatus (updates to ATTENDED after check-in).
           const isAttended = g.attendanceStatus === 'ATTENDED';
@@ -169,7 +194,7 @@ export default async function handler(req: VReq, res: VRes) {
             orderStatus:   addl?.orderStatus,
             _source:       'guests/query',
           };
-          res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody, _orderDebug: orderDebug });
+          res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody, _orderDebug: orderDebug, _strategyADebug: strategyADebug });
           return;
         }
       }
