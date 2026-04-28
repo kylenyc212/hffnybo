@@ -143,6 +143,12 @@ export default async function handler(req: VReq, res: VRes) {
                 ) ?? tickets[0];
                 if (matchedTicket?.name)    ticketName   = String(matchedTicket.name);
                 if (matchedTicket?.checkIn) orderCheckIn = matchedTicket.checkIn as Record<string, unknown>;
+                // fullyCheckedIn is the order-level check-in flag Wix sets when all
+                // tickets in the order are checked in — use it as fallback when
+                // the tickets array is empty (e.g. comp/add-guest tickets).
+                if (!orderCheckIn && order.fullyCheckedIn === true) {
+                  orderCheckIn = { fullyCheckedIn: true };
+                }
               }
             } catch (e) {
               orderDebug = { error: String(e) };
