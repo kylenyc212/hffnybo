@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchWixEvents,
-  setScreeningWixMapping,
+  moveWixEventMapping,
   syncWixSoldNow,
   timeAgo,
   listScreeningsForMapping,
@@ -66,43 +66,46 @@ export function WixPanel() {
           : `Synced ${r.changes.length} change(s):\n` +
             r.changes.map((c) => `  • ${c.title}: ${c.before} → ${c.after}`).join('\n')
       );
-      // Refresh screenings to show updated wix_synced_at + online_sold
       setScreenings(await listScreeningsForMapping());
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Sync failed');
     } finally { setBusy(false); }
   }
 
-  async function handleMap(screeningId: string, wixId: string | null) {
+  async function handleMap(wixEventId: string, fromScreeningId: string | null, toScreeningId: string | null) {
     setErr(null);
     try {
-      await setScreeningWixMapping(screeningId, wixId);
+      await moveWixEventMapping(wixEventId, fromScreeningId, toScreeningId);
       setScreenings(await listScreeningsForMapping());
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Map failed');
     }
   }
 
-  // Build "what's mapped where" lookup
+  // For a given Wix event id, which BO screening (if any) currently has it mapped?
   const screeningByWixId = useMemo(() => {
     const m = new Map<string, ScreeningRow>();
-    for (const s of screenings) if (s.wix_event_id) m.set(s.wix_event_id, s);
+    for (const s of screenings) {
+      for (const wid of s.wix_event_ids ?? []) m.set(wid, s);
+    }
     return m;
   }, [screenings]);
 
-  const mappedWixIds = useMemo(
-    () => new Set(screenings.map((s) => s.wix_event_id).filter(Boolean) as string[]),
-    [screenings]
-  );
+  // Count of mapped Wix events per BO screening (for dropdown labels)
+  const wixCountByScreening = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of screenings) m.set(s.id, (s.wix_event_ids ?? []).length);
+    return m;
+  }, [screenings]);
 
-  // Slim category counts for the header
+  // Stats header
   const stats = useMemo(() => {
     const paid = wixEvents.filter((e) => !e.isFree && e.registrationType === 'TICKETING').length;
     const free = wixEvents.filter((e) => e.isFree).length;
     const totalSold = wixEvents.reduce((s, e) => s + e.ticketsSold, 0);
-    const mapped = wixEvents.filter((e) => mappedWixIds.has(e.id)).length;
+    const mapped = wixEvents.filter((e) => screeningByWixId.has(e.id)).length;
     return { paid, free, totalSold, mapped };
-  }, [wixEvents, mappedWixIds]);
+  }, [wixEvents, screeningByWixId]);
 
   return (
     <div className="space-y-4">
@@ -111,9 +114,10 @@ export function WixPanel() {
           <div>
             <div className="text-lg font-semibold">Wix online ticket sync</div>
             <div className="text-sm text-slate-400">
-              Pulls online sales from Wix every 5 min and writes them into{' '}
+              Pulls online sales from Wix and writes them into{' '}
               <code className="text-slate-200">screenings.online_sold</code> so the box office
-              capacity math stays correct. Map each Wix event to a box-office screening below.
+              capacity math stays correct. For double features, map both Wix events to the same BO
+              screening — sold counts get summed.
             </div>
           </div>
           <button
@@ -152,8 +156,8 @@ export function WixPanel() {
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <div className="text-lg font-semibold mb-3">Wix events → BO screenings</div>
         <div className="text-xs text-slate-400 mb-3">
-          Pick which BO screening each Wix event belongs to. Once mapped, sold counts flow Wix→BO automatically.
-          Free events use RSVP totals; paid events use ticket sold counts.
+          Pick which BO screening each Wix event belongs to. A single BO screening can receive
+          multiple Wix events (double features) — the sold counts are summed.
         </div>
 
         <div className="overflow-x-auto -mx-2">
@@ -169,7 +173,7 @@ export function WixPanel() {
             </thead>
             <tbody>
               {wixEvents.map((ev) => {
-                const mapped = screeningByWixId.get(ev.id);
+                const mappedScreening = screeningByWixId.get(ev.id);
                 return (
                   <tr key={ev.id} className="border-t border-slate-700 align-top">
                     <td className="py-2 px-2">
@@ -203,37 +207,31 @@ export function WixPanel() {
                     </td>
                     <td className="py-2 px-2">
                       <select
-                        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs max-w-[260px]"
-                        value={mapped?.id ?? ''}
-                        onChange={(e) => {
-                          const newScreeningId = e.target.value || null;
-                          if (mapped && mapped.id !== newScreeningId) {
-                            // Clear the old mapping first
-                            handleMap(mapped.id, null).then(() => {
-                              if (newScreeningId) handleMap(newScreeningId, ev.id);
-                            });
-                          } else if (newScreeningId) {
-                            handleMap(newScreeningId, ev.id);
-                          } else if (mapped) {
-                            handleMap(mapped.id, null);
-                          }
-                        }}
+                        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs max-w-[280px]"
+                        value={mappedScreening?.id ?? ''}
+                        onChange={(e) =>
+                          handleMap(ev.id, mappedScreening?.id ?? null, e.target.value || null)
+                        }
                       >
                         <option value="">— skip —</option>
                         {screenings.map((s) => {
-                          const conflict = !!s.wix_event_id && s.wix_event_id !== ev.id;
+                          const count = wixCountByScreening.get(s.id) ?? 0;
+                          // Show count of OTHER Wix events already mapped to this screening.
+                          const otherCount =
+                            count - ((s.wix_event_ids ?? []).includes(ev.id) ? 1 : 0);
                           return (
-                            <option key={s.id} value={s.id} disabled={conflict}>
+                            <option key={s.id} value={s.id}>
                               {s.is_always_available ? '★ ' : ''}
                               {fmtWhen(s.starts_at)} — {s.title}
-                              {conflict ? ' (already mapped)' : ''}
+                              {otherCount > 0 ? ` (+${otherCount} other Wix)` : ''}
                             </option>
                           );
                         })}
                       </select>
-                      {mapped?.wix_synced_at && (
+                      {mappedScreening?.wix_synced_at && (
                         <div className="text-[10px] text-slate-500 mt-1">
-                          synced {timeAgo(mapped.wix_synced_at)} · BO online_sold = {mapped.online_sold}
+                          synced {timeAgo(mappedScreening.wix_synced_at)} · BO online_sold ={' '}
+                          {mappedScreening.online_sold}
                         </div>
                       )}
                     </td>
@@ -251,7 +249,9 @@ export function WixPanel() {
 }
 
 function UnmappedScreenings({ screenings }: { screenings: ScreeningRow[] }) {
-  const unmapped = screenings.filter((s) => !s.wix_event_id && !s.is_always_available);
+  const unmapped = screenings.filter(
+    (s) => (s.wix_event_ids ?? []).length === 0 && !s.is_always_available
+  );
   if (unmapped.length === 0) return null;
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">

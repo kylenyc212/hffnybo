@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import type { ScreeningRow } from './database.types';
 
-/** Slim shape returned by /api/wix-events (mirrors api/_wix.ts WixEventSummary). */
+/** Slim shape returned by /api/wix-events. */
 export interface WixEventSummary {
   id: string;
   title: string;
@@ -31,22 +31,66 @@ export async function fetchWixEvents(): Promise<{
   return res.json();
 }
 
-/** Map a Wix event ID onto a screening (or clear it). */
-export async function setScreeningWixMapping(
-  screeningId: string,
-  wixEventId: string | null
-): Promise<void> {
+/**
+ * Add or remove a Wix event ID from a screening's mapping array.
+ * Use addWixEventToScreening / removeWixEventFromScreening for clarity.
+ */
+async function patchWixEventIds(screeningId: string, ids: string[]) {
   const { error } = await supabase
     .from('screenings')
-    .update({ wix_event_id: wixEventId })
+    .update({ wix_event_ids: ids })
     .eq('id', screeningId);
   if (error) throw new Error(error.message);
 }
 
+/** Add `wixEventId` to the screening's wix_event_ids array (idempotent). */
+export async function addWixEventToScreening(screeningId: string, wixEventId: string) {
+  const { data, error } = await supabase
+    .from('screenings')
+    .select('wix_event_ids')
+    .eq('id', screeningId)
+    .single();
+  if (error) throw new Error(error.message);
+  const current = (data?.wix_event_ids ?? []) as string[];
+  if (current.includes(wixEventId)) return;
+  await patchWixEventIds(screeningId, [...current, wixEventId]);
+}
+
+/** Remove `wixEventId` from a screening's wix_event_ids array. */
+export async function removeWixEventFromScreening(screeningId: string, wixEventId: string) {
+  const { data, error } = await supabase
+    .from('screenings')
+    .select('wix_event_ids')
+    .eq('id', screeningId)
+    .single();
+  if (error) throw new Error(error.message);
+  const current = (data?.wix_event_ids ?? []) as string[];
+  const next = current.filter((id) => id !== wixEventId);
+  if (next.length === current.length) return;
+  await patchWixEventIds(screeningId, next);
+}
+
+/**
+ * Move a Wix event mapping: remove from `fromScreeningId` (if any) and add to `toScreeningId`.
+ * Pass `toScreeningId = null` to just unmap.
+ */
+export async function moveWixEventMapping(
+  wixEventId: string,
+  fromScreeningId: string | null,
+  toScreeningId: string | null
+) {
+  if (fromScreeningId && fromScreeningId !== toScreeningId) {
+    await removeWixEventFromScreening(fromScreeningId, wixEventId);
+  }
+  if (toScreeningId) {
+    await addWixEventToScreening(toScreeningId, wixEventId);
+  }
+}
+
 /**
  * Push current Wix sold counts into screenings.online_sold for every screening
- * with a wix_event_id mapping. Called by the "Sync now" button. The Vercel
- * cron does the same thing every 5 minutes server-side.
+ * with at least one wix_event_id mapped. For double features (multiple Wix
+ * events mapped to one BO screening), the sold counts are SUMMED.
  *
  * Returns the list of changes for display.
  */
@@ -56,10 +100,10 @@ export async function syncWixSoldNow(events: WixEventSummary[]): Promise<{
 }> {
   const byId = new Map(events.map((e) => [e.id, e]));
 
+  // Pull every screening that has at least one Wix event mapped.
   const { data: mapped, error } = await supabase
     .from('screenings')
-    .select('id, title, wix_event_id, online_sold')
-    .not('wix_event_id', 'is', null);
+    .select('id, title, wix_event_ids, online_sold');
   if (error) throw new Error(error.message);
 
   const now = new Date().toISOString();
@@ -67,9 +111,19 @@ export async function syncWixSoldNow(events: WixEventSummary[]): Promise<{
   let updated = 0;
 
   for (const row of mapped ?? []) {
-    const wix = byId.get(row.wix_event_id!);
-    if (!wix) continue;
-    const newSold = wix.registrationType === 'RSVP' ? wix.rsvpCount : wix.ticketsSold;
+    const ids = (row.wix_event_ids ?? []) as string[];
+    if (ids.length === 0) continue;
+
+    let newSold = 0;
+    let foundAny = false;
+    for (const id of ids) {
+      const wix = byId.get(id);
+      if (!wix) continue;
+      foundAny = true;
+      newSold += wix.registrationType === 'RSVP' ? wix.rsvpCount : wix.ticketsSold;
+    }
+    if (!foundAny) continue;
+
     const before = row.online_sold ?? 0;
     const { error: upErr } = await supabase
       .from('screenings')

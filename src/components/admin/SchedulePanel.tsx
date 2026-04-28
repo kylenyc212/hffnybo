@@ -51,7 +51,11 @@ export function SchedulePanel() {
               </div>
               <div className="text-xs text-slate-400">
                 cap {s.capacity}{s.is_free ? ' · FREE' : ''}{s.online_sold ? ` · ${s.online_sold} online` : ''}
-                {s.wix_event_id && <span className="ml-1 text-emerald-400">· wix↔</span>}
+                {(s.wix_event_ids?.length ?? 0) > 0 && (
+                  <span className="ml-1 text-emerald-400">
+                    · wix↔{s.wix_event_ids.length > 1 ? `×${s.wix_event_ids.length}` : ''}
+                  </span>
+                )}
                 <span className="ml-2">{expanded === s.id ? '▾' : '▸'}</span>
               </div>
             </button>
@@ -154,9 +158,9 @@ function ScreeningEditor({
         <label>
           <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
             <span>Online tickets sold (Wix)</span>
-            {existing?.wix_event_id && (
+            {(existing?.wix_event_ids?.length ?? 0) > 0 && (
               <span className="text-[10px] text-emerald-400 font-normal">
-                auto-synced from Wix
+                auto-synced from {existing!.wix_event_ids.length === 1 ? 'Wix' : `${existing!.wix_event_ids.length} Wix events`}
               </span>
             )}
           </div>
@@ -164,8 +168,8 @@ function ScreeningEditor({
             type="number" min="0"
             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 disabled:opacity-60"
             value={online}
-            disabled={!!existing?.wix_event_id}
-            title={existing?.wix_event_id ? 'Mapped to Wix — managed by sync. Edit the mapping in Admin → Wix sync.' : ''}
+            disabled={(existing?.wix_event_ids?.length ?? 0) > 0}
+            title={(existing?.wix_event_ids?.length ?? 0) > 0 ? 'Mapped to Wix — managed by sync. Edit the mapping in Admin → Wix sync.' : ''}
             onChange={(e) => setOnline(Math.max(0, parseInt(e.target.value || '0', 10)))}
           />
         </label>

@@ -116,33 +116,42 @@ export default async function handler(req: VReq, res: VRes) {
     const events = await listUpcomingWixEvents();
     const byId = new Map(events.map((e) => [e.id, e]));
 
-    // 2) load mapped screenings
+    // 2) load mapped screenings (any with at least one Wix event in the array)
     const { data: mapped, error: loadErr } = await sb
       .from('screenings')
-      .select('id, title, wix_event_id, online_sold')
-      .not('wix_event_id', 'is', null);
+      .select('id, title, wix_event_ids, online_sold');
     if (loadErr) throw new Error(`Load screenings: ${loadErr.message}`);
 
-    // 3) update each
+    // 3) update each. For double features (multiple Wix events on one BO
+    //    screening), sum the sold counts.
     const now = new Date().toISOString();
     let updated = 0;
     const skipped: { id: string; title: string; reason: string }[] = [];
     const changes: { title: string; before: number; after: number }[] = [];
 
     for (const row of mapped ?? []) {
-      const wixEv = byId.get(row.wix_event_id as string);
-      if (!wixEv) {
+      const ids = (row.wix_event_ids as string[] | null) ?? [];
+      if (ids.length === 0) continue;
+
+      let newSold = 0;
+      let foundAny = false;
+      for (const id of ids) {
+        const wixEv = byId.get(id);
+        if (!wixEv) continue;
+        foundAny = true;
+        const isRsvp = wixEv.registration?.type === 'RSVP';
+        newSold += isRsvp
+          ? (wixEv.summaries?.rsvps?.totalCount ?? 0)
+          : (wixEv.summaries?.tickets?.ticketsSold ?? 0);
+      }
+      if (!foundAny) {
         skipped.push({
           id: row.id as string,
           title: row.title as string,
-          reason: 'wix event not in UPCOMING/STARTED'
+          reason: 'no mapped Wix events found in UPCOMING/STARTED'
         });
         continue;
       }
-      const isRsvp = wixEv.registration?.type === 'RSVP';
-      const newSold = isRsvp
-        ? (wixEv.summaries?.rsvps?.totalCount ?? 0)
-        : (wixEv.summaries?.tickets?.ticketsSold ?? 0);
       const before = row.online_sold as number;
       const { error } = await sb
         .from('screenings')
