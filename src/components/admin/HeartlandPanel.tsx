@@ -219,17 +219,45 @@ export function HeartlandPanel() {
               </div>
             )}
 
-            {/* Raw XML toggle */}
-            <button
-              onClick={() => setShowRaw(!showRaw)}
-              className="text-xs text-slate-400 hover:text-slate-200"
-            >
-              {showRaw ? '− Hide' : '+ Show'} raw XML
-            </button>
+            {/* Raw XML / export */}
+            <div className="flex flex-wrap gap-2 items-center">
+              <button
+                onClick={() => setShowRaw(!showRaw)}
+                className="text-xs text-slate-400 hover:text-slate-200"
+              >
+                {showRaw ? '− Hide' : '+ Show'} raw XML
+              </button>
+              <button
+                onClick={() => {
+                  const text = JSON.stringify(apiResult, null, 2);
+                  navigator.clipboard?.writeText(text).catch(() => {});
+                }}
+                className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
+              >
+                Copy JSON
+              </button>
+              <button
+                onClick={() => {
+                  const text = JSON.stringify(apiResult, null, 2);
+                  const blob = new Blob([text], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url; a.download = 'heartland-response.json';
+                  document.body.appendChild(a); a.click();
+                  document.body.removeChild(a);
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+                className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
+              >
+                ↓ Download JSON
+              </button>
+            </div>
             {showRaw && (
-              <pre className="bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs overflow-x-auto max-h-80 text-slate-300 whitespace-pre-wrap break-all">
-                {String(apiResult.rawXml ?? '')}
-              </pre>
+              <textarea
+                readOnly
+                value={String(apiResult.rawXml ?? '')}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-300 h-48 resize-y"
+              />
             )}
           </div>
         )}
