@@ -16,6 +16,7 @@ interface WixTicket {
   status?: string;
   canceled?: boolean;
   archived?: boolean;
+  orderStatus?: string;
   [key: string]: unknown;
 }
 
@@ -179,7 +180,9 @@ export function CheckInPage() {
     ? [ticket.guestDetails.firstName, ticket.guestDetails.lastName].filter(Boolean).join(' ')
     : null;
   const guestName  = ticket?.guestFullName ?? ticket?.orderFullName ?? guestDetailsName ?? '—';
-  const ticketType = ticket?.name ?? 'Ticket';
+  // Ticket type: fall back to order status (FREE / PAID) so it's not blank
+  const ticketType = ticket?.name
+    ?? (ticket?.orderStatus === 'FREE' ? 'Free / Comp' : ticket?.orderStatus ? String(ticket.orderStatus) : 'Ticket');
   const alreadyIn  = ticket ? detectCheckedIn(ticket) : false;
   const isCanceled = !!ticket?.canceled;
   const checkInObj = ticket?.checkIn as Record<string, unknown> | null | undefined;

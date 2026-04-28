@@ -63,11 +63,23 @@ export default async function handler(req: VReq, res: VRes) {
       const tn  = encodeURIComponent(ticketNumber);
       const eid = eventId ? encodeURIComponent(eventId) : '';
 
-      // ── Strategy A: POST /events/v2/guests/query (filter by ticketNumber)
-      // Uses a POST body so Content-Type is fine; supports filtering by ticketNumber.
+      // ── Strategy A: GET /events/v1/tickets/{ticketNumber}
+      // Returns full ticket with guestDetails (name, email) and checkIn timestamp.
+      // No Content-Type header on GETs — that was causing the 400s before.
+      const gtRes = await fetch(`${WIX_BASE}/events/v1/tickets/${tn}`, { headers: getHeaders });
+      if (gtRes.ok) {
+        const gtBody = await gtRes.json() as Record<string, unknown>;
+        // Response may be the ticket directly or wrapped in { ticket: {...} }
+        const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
+        res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
+        return;
+      }
+
+      // ── Strategy B: POST /events/v2/guests/query (filter by ticketNumber)
+      // Returns limited fields (no name) but reliably finds the ticket.
       const guestFilter: Record<string, unknown> = { ticketNumber: { $eq: ticketNumber } };
       if (eventId) guestFilter.eventId = { $eq: eventId };
-      const gqRes  = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
+      const gqRes = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
         method: 'POST',
         headers: postHeaders,
         body: JSON.stringify({ query: { filter: guestFilter } }),
@@ -76,16 +88,17 @@ export default async function handler(req: VReq, res: VRes) {
         const gqBody = await gqRes.json() as Record<string, unknown>;
         const guests = Array.isArray(gqBody.guests) ? gqBody.guests as Record<string, unknown>[] : [];
         if (guests.length > 0) {
-          // Map guest fields to WixTicket shape the frontend expects
           const g = guests[0];
+          const addl = g.additionalDetails as Record<string, unknown> | undefined;
           const ticket: Record<string, unknown> = {
             ticketNumber:  g.ticketNumber ?? ticketNumber,
-            orderFullName: g.fullName ?? (g.guestDetails as Record<string,unknown> | undefined)?.fullName,
-            guestDetails:  g.guestDetails,
-            name:          (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? g.name,
-            checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.updatedDate ?? g.attendanceStatusUpdatedDate } : null,
+            orderFullName: g.fullName ?? null,
+            guestDetails:  g.guestDetails ?? null,
+            name:          (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? null,
+            checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.attendanceStatusUpdatedDate } : null,
             checkedIn:     g.attendanceStatus === 'ATTENDED',
-            canceled:      g.canceled ?? false,
+            canceled:      addl?.archived === true,
+            orderStatus:   addl?.orderStatus,
             _source:       'guests/query',
           };
           res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody });
@@ -93,35 +106,23 @@ export default async function handler(req: VReq, res: VRes) {
         }
       }
 
-      // ── Strategy B: GET endpoints (no Content-Type header) ──────────────
-      const getEndpoints = [
-        // Official Get Ticket endpoint (ticketNumber as path param)
-        `${WIX_BASE}/events/v1/tickets/${tn}`,
-        // List Tickets filtered by eventId + ticketNumber
+      // ── Strategy C: List Tickets GET endpoints ───────────────────────────
+      const listEndpoints = [
         ...(eid ? [`${WIX_BASE}/events/v1/tickets?eventId=${eid}&ticketNumber=${tn}`] : []),
-        // List Tickets by ticketNumber alone
         `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}`,
       ];
-
       let lastStatus = gqRes.status;
-      let lastBody: unknown = null;
-      try { lastBody = await gqRes.clone().json(); } catch { /* ignore */ }
+      let lastBody: unknown = await gqRes.json().catch(() => null);
 
-      for (const endpoint of getEndpoints) {
+      for (const endpoint of listEndpoints) {
         const r    = await fetch(endpoint, { headers: getHeaders });
         const body = await r.json() as Record<string, unknown>;
         lastStatus = r.status;
         lastBody   = body;
         if (r.ok) {
           const ticketsArr = Array.isArray(body.tickets) ? body.tickets as Record<string, unknown>[] : null;
-          if (ticketsArr && ticketsArr.length === 0) {
-            lastStatus = 404;
-            lastBody   = { message: 'No ticket found for that number' };
-            continue;
-          }
-          const ticket = ticketsArr
-            ? ticketsArr[0]
-            : (body.ticket as Record<string, unknown> | undefined ?? body);
+          if (ticketsArr && ticketsArr.length === 0) { continue; }
+          const ticket = ticketsArr ? ticketsArr[0] : (body.ticket as Record<string, unknown> | undefined ?? body);
           res.status(200).json({ ticket, _endpoint: endpoint, _raw: body });
           return;
         }
