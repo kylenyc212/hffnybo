@@ -17,20 +17,41 @@ export function WixPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [autoPoll, setAutoPoll] = useState(true);
 
-  async function loadAll() {
-    setErr(null);
+  async function loadAll(silent = false) {
+    if (!silent) setErr(null);
     try {
       const [w, s] = await Promise.all([fetchWixEvents(), listScreeningsForMapping()]);
       setWixEvents(w.events);
       setFetchedAt(w.fetchedAt);
       setScreenings(s);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Failed to load');
+      if (!silent) setErr(e instanceof Error ? e.message : 'Failed to load');
     }
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  // Auto-poll every 60s while the panel is open. Re-pulls Wix data AND
+  // writes back to screenings.online_sold for any mapped screening.
+  // Pauses while a manual sync is in progress.
+  useEffect(() => {
+    if (!autoPoll) return;
+    const id = window.setInterval(async () => {
+      if (busy) return;
+      try {
+        const w = await fetchWixEvents();
+        setWixEvents(w.events);
+        setFetchedAt(w.fetchedAt);
+        await syncWixSoldNow(w.events);
+        setScreenings(await listScreeningsForMapping());
+      } catch {
+        // Stay quiet on background failures — manual button surfaces errors.
+      }
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [autoPoll, busy]);
 
   async function handleSync() {
     setBusy(true); setErr(null); setMsg(null);
@@ -111,11 +132,19 @@ export function WixPanel() {
           <Stat label="Tickets sold (Wix-side)" value={String(stats.totalSold)} />
         </div>
 
-        {fetchedAt && (
-          <div className="text-xs text-slate-500 mt-3">
-            Wix data last fetched: {timeAgo(fetchedAt)}
+        <div className="flex items-center justify-between gap-3 mt-3 text-xs">
+          <div className="text-slate-500">
+            {fetchedAt ? `Wix data last fetched: ${timeAgo(fetchedAt)}` : 'Not loaded yet'}
           </div>
-        )}
+          <label className="flex items-center gap-2 cursor-pointer text-slate-400 hover:text-slate-200">
+            <input
+              type="checkbox"
+              checked={autoPoll}
+              onChange={(e) => setAutoPoll(e.target.checked)}
+            />
+            Auto-refresh every 60s while open
+          </label>
+        </div>
         {msg && <pre className="text-emerald-400 text-xs mt-3 whitespace-pre-wrap font-mono">{msg}</pre>}
         {err && <div className="text-red-400 text-sm mt-3 whitespace-pre-wrap">{err}</div>}
       </div>
