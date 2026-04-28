@@ -65,21 +65,29 @@ export default async function handler(req: VReq, res: VRes) {
       const tn  = encodeURIComponent(ticketNumber);
       const eid = eventId ? encodeURIComponent(eventId) : '';
 
-      // ── Strategy A: GET /events/v1/tickets/{ticketNumber}
-      // Try twice: once with minimal headers (Authorization only, matching docs curl example),
-      // once with full headers. Both use event_id (snake_case per docs) + fieldsets.
+      // ── Strategy A: GET ticket — try multiple path shapes + header variants
+      // Flat path (/events/v1/tickets/{tn}) consistently returns 400 for unknown reasons.
+      // Event-scoped path (/events/v1/events/{eid}/tickets/{tn}) follows the same
+      // pattern as the working order endpoint and may behave differently.
       const gtParams = new URLSearchParams();
       gtParams.append('fieldset', 'GUEST_DETAILS');
       gtParams.append('fieldset', 'TICKET_DETAILS');
       if (eventId) gtParams.set('event_id', eventId);
-      const gtUrl = `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`;
-      for (const hdr of [minHeaders, siteOnlyHeaders, getHeaders]) {
-        const gtRes = await fetch(gtUrl, { headers: hdr });
-        if (gtRes.ok) {
-          const gtBody = await gtRes.json() as Record<string, unknown>;
-          const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
-          res.status(200).json({ ticket, _endpoint: `/events/v1/tickets/${ticketNumber}`, _raw: gtBody });
-          return;
+      const gtUrls = [
+        // Event-scoped path (new — same pattern as working order endpoint)
+        ...(eid ? [`${WIX_BASE}/events/v1/events/${eid}/tickets/${tn}`] : []),
+        // Flat path with fieldsets + event_id
+        `${WIX_BASE}/events/v1/tickets/${tn}?${gtParams}`,
+      ];
+      for (const gtUrl of gtUrls) {
+        for (const hdr of [minHeaders, siteOnlyHeaders, getHeaders]) {
+          const gtRes = await fetch(gtUrl, { headers: hdr });
+          if (gtRes.ok) {
+            const gtBody = await gtRes.json() as Record<string, unknown>;
+            const ticket = (gtBody.ticket as Record<string, unknown> | undefined) ?? gtBody;
+            res.status(200).json({ ticket, _endpoint: gtUrl, _raw: gtBody });
+            return;
+          }
         }
       }
 
