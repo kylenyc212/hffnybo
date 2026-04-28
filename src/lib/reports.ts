@@ -81,10 +81,15 @@ function buildReport(
   lines: OrderLineRow[],
   screenings: ScreeningRow[]
 ): DrawerReport {
+  // Voided cash events (add / removal / adjustment) are excluded from the
+  // expected-cash math but still appear in the activity feed (struck-through).
+  // Sales voids are handled via offsetting adjustment events, not voided_at,
+  // so we don't filter sales here.
+  const isLive = (e: CashEventRow) => !e.voided_at;
   const salesEvents = events.filter((e) => e.kind === 'sale');
-  const removalsList = events.filter((e) => e.kind === 'removal');
-  const addsList = events.filter((e) => e.kind === 'add');
-  const adjustmentsList = events.filter((e) => e.kind === 'adjustment');
+  const removalsList = events.filter((e) => e.kind === 'removal' && isLive(e));
+  const addsList = events.filter((e) => e.kind === 'add' && isLive(e));
+  const adjustmentsList = events.filter((e) => e.kind === 'adjustment' && isLive(e));
   const salesCents = salesEvents.reduce((s, e) => s + e.amount_cents, 0);
   const removalsCents = removalsList.reduce((s, e) => s + e.amount_cents, 0);
   const addsCents = addsList.reduce((s, e) => s + e.amount_cents, 0);

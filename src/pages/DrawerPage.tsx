@@ -15,6 +15,11 @@ import {
 import type { CashCountRow, CashDrawerRow, DenomBreakdown } from '../lib/database.types';
 import { DenomCounter, totalFromDenoms } from '../components/DenomCounter';
 import { VoidModal } from '../components/VoidModal';
+import { HardDeleteModal } from '../components/HardDeleteModal';
+
+type ActionTarget =
+  | { mode: 'order'; id: string; amountCents: number; description?: string }
+  | { mode: 'cash_event'; id: string; amountCents: number; description?: string };
 
 export function DrawerPage() {
   const { user, deviceLabel } = useSession();
@@ -24,7 +29,9 @@ export function DrawerPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [voidFor, setVoidFor] = useState<{ orderId: string; amountCents: number; description?: string } | null>(null);
+  const [voidFor, setVoidFor] = useState<ActionTarget | null>(null);
+  const [deleteFor, setDeleteFor] = useState<ActionTarget | null>(null);
+  const isSuperAdmin = user?.role === 'super_admin';
 
   const refresh = useCallback(async () => {
     setErr(null);
@@ -93,7 +100,9 @@ export function DrawerPage() {
           testCounts={testCounts}
           cashierName={user.name}
           busy={busy}
-          onVoidRequest={(o) => setVoidFor(o)}
+          isSuperAdmin={isSuperAdmin}
+          onVoidRequest={(t) => setVoidFor(t)}
+          onDeleteRequest={(t) => setDeleteFor(t)}
           onRefresh={refresh}
           onRemove={async ({ amountCents, reason }) => {
             setBusy(true);
@@ -140,11 +149,22 @@ export function DrawerPage() {
       )}
       {voidFor && (
         <VoidModal
-          orderId={voidFor.orderId}
-          orderAmountCents={voidFor.amountCents}
-          orderDescription={voidFor.description}
+          mode={voidFor.mode}
+          targetId={voidFor.id}
+          amountCents={voidFor.amountCents}
+          description={voidFor.description}
           onClose={() => setVoidFor(null)}
           onDone={async () => { setVoidFor(null); await refresh(); }}
+        />
+      )}
+      {deleteFor && (
+        <HardDeleteModal
+          mode={deleteFor.mode}
+          targetId={deleteFor.id}
+          amountCents={deleteFor.amountCents}
+          description={deleteFor.description}
+          onClose={() => setDeleteFor(null)}
+          onDone={async () => { setDeleteFor(null); await refresh(); }}
         />
       )}
     </div>
@@ -184,14 +204,37 @@ interface OpenViewProps {
   testCounts: CashCountRow[];
   cashierName: string;
   busy: boolean;
+  isSuperAdmin: boolean;
   onRemove: (p: { amountCents: number; reason: string }) => void;
   onAdd: (p: { amountCents: number; reason: string }) => void;
   onClose: (p: { countedCents: number; denoms: DenomBreakdown }) => void;
-  onVoidRequest: (p: { orderId: string; amountCents: number; description?: string }) => void;
+  onVoidRequest: (
+    p:
+      | { mode: 'order'; id: string; amountCents: number; description?: string }
+      | { mode: 'cash_event'; id: string; amountCents: number; description?: string }
+  ) => void;
+  onDeleteRequest: (
+    p:
+      | { mode: 'order'; id: string; amountCents: number; description?: string }
+      | { mode: 'cash_event'; id: string; amountCents: number; description?: string }
+  ) => void;
   onRefresh: () => void;
 }
 
-function OpenDrawerView({ drawer, events, testCounts, cashierName, busy, onRemove, onAdd, onClose, onVoidRequest, onRefresh }: OpenViewProps) {
+function OpenDrawerView({
+  drawer,
+  events,
+  testCounts,
+  cashierName,
+  busy,
+  isSuperAdmin,
+  onRemove,
+  onAdd,
+  onClose,
+  onVoidRequest,
+  onDeleteRequest,
+  onRefresh
+}: OpenViewProps) {
   const [showRemove, setShowRemove] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showClose, setShowClose] = useState(false);
@@ -206,16 +249,18 @@ function OpenDrawerView({ drawer, events, testCounts, cashierName, busy, onRemov
   const [testBusy, setTestBusy] = useState(false);
   const [testErr, setTestErr] = useState<string | null>(null);
 
-  // Sales events: sum + count, excluding voided (the void inserts an offsetting adjustment,
-  // but we still want "Sales" to reflect only non-voided money brought in).
+  // Sales events: count + sum, excluding voided (offsetting adjustment handles math).
   const salesEvents = events.filter((e) => e.kind === 'sale' && !e.order_voided);
   const salesCents = salesEvents.reduce((s, e) => s + e.amount_cents, 0);
-  const adjustments = events.filter((e) => e.kind === 'adjustment');
-  const adjustmentsCents = adjustments.reduce((s, e) => s + e.amount_cents, 0);
-  const adds = events.filter((e) => e.kind === 'add');
-  const addsCents = adds.reduce((s, e) => s + e.amount_cents, 0);
   const salesCount = salesEvents.length;
-  const removals = events.filter((e) => e.kind === 'removal');
+  // Add/removal/adjustment events: skip voided rows from totals (their voided_at is
+  // set, so reports.ts and this view both treat them as if they didn't happen).
+  const isLive = (e: EnrichedEvent) => !e.voided_at;
+  const adjustments = events.filter((e) => e.kind === 'adjustment' && isLive(e));
+  const adjustmentsCents = adjustments.reduce((s, e) => s + e.amount_cents, 0);
+  const adds = events.filter((e) => e.kind === 'add' && isLive(e));
+  const addsCents = adds.reduce((s, e) => s + e.amount_cents, 0);
+  const removals = events.filter((e) => e.kind === 'removal' && isLive(e));
   const removalsCents = removals.reduce((s, e) => s + e.amount_cents, 0); // already negative
   // Expected uses all sale events (voids get offset by the adjustment row automatically).
   const rawSales = events.filter((e) => e.kind === 'sale').reduce((s, e) => s + e.amount_cents, 0);
@@ -447,41 +492,118 @@ function OpenDrawerView({ drawer, events, testCounts, cashierName, busy, onRemov
         ) : (
           <ul className="divide-y divide-slate-700">
             {events.map((e) => {
-              const voided = e.kind === 'sale' && e.order_voided;
+              const saleVoided = e.kind === 'sale' && e.order_voided;
+              const cashEventVoided = e.kind !== 'sale' && !!e.voided_at;
+              const isVoided = saleVoided || cashEventVoided;
+              const canVoidCashEvent =
+                e.kind !== 'sale' && e.kind !== 'open' && e.kind !== 'close' && !cashEventVoided;
+              const canVoidSale = e.kind === 'sale' && !saleVoided && !!e.order_id;
+              // Super-admin can hard-delete anything except open/close anchors.
+              const canDelete =
+                isSuperAdmin && e.kind !== 'open' && e.kind !== 'close';
+              const timeLabel = new Date(e.created_at).toLocaleTimeString('en-US', {
+                timeZone: 'America/New_York'
+              });
               return (
-                <li key={e.id} className="py-2 flex items-center justify-between gap-3">
+                <li key={e.id} className="py-2 flex items-center justify-between gap-3 flex-wrap">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm">
-                      <span className={
-                        e.kind === 'sale' ? (voided ? 'text-slate-500 line-through' : 'text-emerald-400') :
-                        e.kind === 'removal' ? 'text-amber-400' :
-                        e.kind === 'add' ? 'text-cyan-400' :
-                        e.kind === 'open' ? 'text-slate-300' :
-                        e.kind === 'close' ? 'text-red-400' :
-                        e.kind === 'adjustment' ? 'text-rose-400' : 'text-slate-400'
-                      }>
-                        {e.kind}{voided ? ' (voided)' : ''}
+                      <span
+                        className={
+                          isVoided
+                            ? 'text-slate-500 line-through'
+                            : e.kind === 'sale'
+                              ? 'text-emerald-400'
+                              : e.kind === 'removal'
+                                ? 'text-amber-400'
+                                : e.kind === 'add'
+                                  ? 'text-cyan-400'
+                                  : e.kind === 'open'
+                                    ? 'text-slate-300'
+                                    : e.kind === 'close'
+                                      ? 'text-red-400'
+                                      : e.kind === 'adjustment'
+                                        ? 'text-rose-400'
+                                        : 'text-slate-400'
+                        }
+                      >
+                        {e.kind}
+                        {isVoided ? ' (voided)' : ''}
                       </span>
                       {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
                     </div>
                     <div className="text-xs text-slate-500">
-                      {new Date(e.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} · {e.who}
+                      {timeLabel} · {e.who}
                       {e.order_device && <> · {e.order_device}</>}
+                      {cashEventVoided && e.voided_by && (
+                        <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
+                      )}
                     </div>
                   </div>
-                  <div className={`tabular-nums font-semibold ${voided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''}`}>
+                  <div
+                    className={`tabular-nums font-semibold ${
+                      isVoided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''
+                    }`}
+                  >
                     {e.amount_cents < 0 ? '' : '+'}{money(e.amount_cents)}
                   </div>
-                  {e.kind === 'sale' && !voided && e.order_id && (
-                    <button
-                      onClick={() => onVoidRequest({
-                        orderId: e.order_id!,
-                        amountCents: e.amount_cents,
-                        description: `${e.who} · ${new Date(e.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
-                      })}
-                      className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
-                    >Void</button>
-                  )}
+                  <div className="flex gap-1">
+                    {canVoidSale && (
+                      <button
+                        onClick={() =>
+                          onVoidRequest({
+                            mode: 'order',
+                            id: e.order_id!,
+                            amountCents: e.amount_cents,
+                            description: `Sale · ${e.who} · ${timeLabel}`
+                          })
+                        }
+                        className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                      >
+                        Void
+                      </button>
+                    )}
+                    {canVoidCashEvent && (
+                      <button
+                        onClick={() =>
+                          onVoidRequest({
+                            mode: 'cash_event',
+                            id: e.id,
+                            amountCents: e.amount_cents,
+                            description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
+                          })
+                        }
+                        className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                      >
+                        Void
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() =>
+                          onDeleteRequest(
+                            e.kind === 'sale' && e.order_id
+                              ? {
+                                  mode: 'order',
+                                  id: e.order_id,
+                                  amountCents: e.amount_cents,
+                                  description: `Sale · ${e.who} · ${timeLabel}`
+                                }
+                              : {
+                                  mode: 'cash_event',
+                                  id: e.id,
+                                  amountCents: e.amount_cents,
+                                  description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
+                                }
+                          )
+                        }
+                        className="text-xs bg-slate-800 hover:bg-red-900 text-red-300 hover:text-white px-2 py-1 rounded border border-red-900/50"
+                        title="Hard delete (super admin only)"
+                      >
+                        ✕ Delete
+                      </button>
+                    )}
+                  </div>
                 </li>
               );
             })}

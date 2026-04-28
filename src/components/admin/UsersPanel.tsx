@@ -59,6 +59,7 @@ export function UsersPanel() {
           >
             <option value="cashier">cashier</option>
             <option value="admin">admin</option>
+            <option value="super_admin">super admin</option>
           </select>
           <button
             onClick={create}

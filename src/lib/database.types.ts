@@ -2,7 +2,7 @@
 
 export type CompCategory = 'press' | 'pass_holder' | 'industry';
 export type TicketCategory = 'paid' | 'comp' | 'other';
-export type UserRole = 'cashier' | 'admin';
+export type UserRole = 'cashier' | 'admin' | 'super_admin';
 export type CashEventType = 'open' | 'sale' | 'removal' | 'close' | 'adjustment' | 'add';
 
 export interface ScreeningRow {
@@ -137,6 +137,9 @@ export interface CashEventRow {
   who: string;
   order_id: string | null;
   created_at: string;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
 }
 
 export interface Database {

@@ -13,7 +13,7 @@ export function AdminPage() {
   const [section, setSection] = useState<Section>('schedule');
 
   if (!user) return <div className="p-6 text-slate-400">Sign in first.</div>;
-  if (user.role !== 'admin') {
+  if (user.role !== 'admin' && user.role !== 'super_admin') {
     return (
       <div className="p-6 max-w-lg mx-auto bg-amber-900/30 border border-amber-700 text-amber-100 rounded-xl">
         Admin access required. Ask an admin to promote your PIN via the Admin → Users page.
