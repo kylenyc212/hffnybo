@@ -26,24 +26,29 @@ interface VRes {
 
 const WIX_BASE = 'https://www.wixapis.com';
 
-function wixHeaders(): Record<string, string> {
+function wixHeaders(includeContentType = false): Record<string, string> {
   const key     = process.env.WIX_API_KEY     ?? '';
   const account = process.env.WIX_ACCOUNT_ID  ?? '';
   const site    = process.env.WIX_SITE_ID     ?? '';
   if (!key || !account || !site) {
     throw new Error('Missing WIX_API_KEY, WIX_ACCOUNT_ID, or WIX_SITE_ID env vars');
   }
-  return {
+  const h: Record<string, string> = {
     Authorization:    key,
     'wix-account-id': account,
     'wix-site-id':    site,
-    'Content-Type':   'application/json',
   };
+  // Only add Content-Type for requests with a body (POST/PUT).
+  // Sending Content-Type: application/json on GET requests with no body
+  // causes some Wix endpoints to return 400.
+  if (includeContentType) h['Content-Type'] = 'application/json';
+  return h;
 }
 
 export default async function handler(req: VReq, res: VRes) {
   try {
-    const headers = wixHeaders();
+    const getHeaders  = wixHeaders(false);  // no Content-Type — GET requests have no body
+    const postHeaders = wixHeaders(true);   // Content-Type: application/json for POST
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     // ── GET: look up ticket ──────────────────────────────────────────────
@@ -55,56 +60,74 @@ export default async function handler(req: VReq, res: VRes) {
         return;
       }
 
-      // Wix List Tickets: GET /events/v1/tickets
-      // Try multiple param-name variants (Wix docs show both camelCase and snake_case in
-      // different places; fieldsets vary by API version too).
       const tn  = encodeURIComponent(ticketNumber);
       const eid = eventId ? encodeURIComponent(eventId) : '';
-      const fs  = 'fieldset=GUEST_DETAILS&fieldset=TICKET_DETAILS';
-      const endpoints = [
-        // Shape 1a: camelCase params + eventId (most specific)
-        ...(eid ? [`${WIX_BASE}/events/v1/tickets?eventId=${eid}&ticketNumber=${tn}&${fs}`] : []),
-        // Shape 1b: snake_case params + eventId (some Wix doc examples use snake_case)
-        ...(eid ? [`${WIX_BASE}/events/v1/tickets?event_id=${eid}&ticket_number=${tn}&${fs}`] : []),
-        // Shape 2a: camelCase ticketNumber, no eventId
-        `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}&${fs}`,
-        // Shape 2b: no fieldsets at all (in case fieldset values cause the 400)
-        `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}`,
-        // Shape 2c: snake_case, no eventId
-        `${WIX_BASE}/events/v1/tickets?ticket_number=${tn}`,
-        // Shape 3: Get Ticket by path
+
+      // ── Strategy A: POST /events/v2/guests/query (filter by ticketNumber)
+      // Uses a POST body so Content-Type is fine; supports filtering by ticketNumber.
+      const guestFilter: Record<string, unknown> = { ticketNumber: { $eq: ticketNumber } };
+      if (eventId) guestFilter.eventId = { $eq: eventId };
+      const gqRes  = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify({ query: { filter: guestFilter } }),
+      });
+      if (gqRes.ok) {
+        const gqBody = await gqRes.json() as Record<string, unknown>;
+        const guests = Array.isArray(gqBody.guests) ? gqBody.guests as Record<string, unknown>[] : [];
+        if (guests.length > 0) {
+          // Map guest fields to WixTicket shape the frontend expects
+          const g = guests[0];
+          const ticket: Record<string, unknown> = {
+            ticketNumber:  g.ticketNumber ?? ticketNumber,
+            orderFullName: g.fullName ?? (g.guestDetails as Record<string,unknown> | undefined)?.fullName,
+            guestDetails:  g.guestDetails,
+            name:          (g.ticketDetails as Record<string,unknown> | undefined)?.ticketName ?? g.name,
+            checkIn:       g.attendanceStatus === 'ATTENDED' ? { created: g.updatedDate ?? g.attendanceStatusUpdatedDate } : null,
+            checkedIn:     g.attendanceStatus === 'ATTENDED',
+            canceled:      g.canceled ?? false,
+            _source:       'guests/query',
+          };
+          res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody });
+          return;
+        }
+      }
+
+      // ── Strategy B: GET endpoints (no Content-Type header) ──────────────
+      const getEndpoints = [
+        // Official Get Ticket endpoint (ticketNumber as path param)
         `${WIX_BASE}/events/v1/tickets/${tn}`,
+        // List Tickets filtered by eventId + ticketNumber
+        ...(eid ? [`${WIX_BASE}/events/v1/tickets?eventId=${eid}&ticketNumber=${tn}`] : []),
+        // List Tickets by ticketNumber alone
+        `${WIX_BASE}/events/v1/tickets?ticketNumber=${tn}`,
       ];
 
-      let lastStatus = 0;
+      let lastStatus = gqRes.status;
       let lastBody: unknown = null;
+      try { lastBody = await gqRes.clone().json(); } catch { /* ignore */ }
 
-      for (const endpoint of endpoints) {
-        const r    = await fetch(endpoint, { headers });
+      for (const endpoint of getEndpoints) {
+        const r    = await fetch(endpoint, { headers: getHeaders });
         const body = await r.json() as Record<string, unknown>;
         lastStatus = r.status;
         lastBody   = body;
         if (r.ok) {
-          // List Tickets returns { tickets: [...] }; normalize to { ticket: {...} }
-          // so the frontend can use a consistent shape regardless of which endpoint succeeded.
           const ticketsArr = Array.isArray(body.tickets) ? body.tickets as Record<string, unknown>[] : null;
-          const ticket = ticketsArr
-            ? (ticketsArr[0] ?? null)
-            : (body.ticket as Record<string, unknown> | undefined ?? body);
           if (ticketsArr && ticketsArr.length === 0) {
-            // Endpoint responded 200 but no tickets matched — treat as not found
             lastStatus = 404;
-            lastBody   = { message: 'Ticket not found for that number/event combination' };
+            lastBody   = { message: 'No ticket found for that number' };
             continue;
           }
+          const ticket = ticketsArr
+            ? ticketsArr[0]
+            : (body.ticket as Record<string, unknown> | undefined ?? body);
           res.status(200).json({ ticket, _endpoint: endpoint, _raw: body });
           return;
         }
-        // 400 / 404 → try next shape; anything else (401, 403) → stop immediately
         if (r.status !== 400 && r.status !== 404) break;
       }
 
-      // All endpoints failed — return the last error with full detail
       res.status(lastStatus || 502).json({
         error: String((lastBody as Record<string, unknown>)?.message ?? 'Wix lookup failed'),
         wixStatus: lastStatus,
@@ -130,7 +153,7 @@ export default async function handler(req: VReq, res: VRes) {
       // Note: field is "ticketNumber" (array), NOT "ticketNumbers"
       const r = await fetch(`${WIX_BASE}/events/v1/tickets/check-in`, {
         method: 'POST',
-        headers,
+        headers: postHeaders,
         body: JSON.stringify({ eventId, ticketNumber: [ticketNumber] }),
       });
       const data = await r.json() as Record<string, unknown>;
