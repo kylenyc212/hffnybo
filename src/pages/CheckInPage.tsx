@@ -8,41 +8,51 @@ interface WixTicket {
   ticketNumber?: string;
   guestFullName?: string;
   orderFullName?: string;
-  name?: string;          // ticket type label
+  name?: string;
   checkIn?: { created?: string } | null;
-  canceled?: boolean;
+  checkedIn?: boolean;
   status?: string;
-  [key: string]: unknown; // allow unknown fields from Wix
+  canceled?: boolean;
+  [key: string]: unknown;
 }
 
 /** Parse a Wix ticket QR code URL or bare ticket number.
- *  QR format: https://www.wixevents.com/check-in/{ticketNumber},{eventId}
- *  Returns the ticketNumber string, or null if unparseable. */
+ *  QR format: https://www.wixevents.com/check-in/{ticketNumber},{eventId} */
 function parseQr(raw: string): string | null {
   const trimmed = raw.trim();
   try {
     const u = new URL(trimmed);
     const m = u.pathname.match(/\/check-in\/([^,/?]+)/);
     if (m) return m[1];
-  } catch {
-    /* not a URL — fall through */
-  }
+  } catch { /* not a URL */ }
   return trimmed || null;
+}
+
+/** Detect "already checked in" across possible Wix field shapes */
+function detectCheckedIn(t: WixTicket): boolean {
+  if (t.checkedIn === true) return true;
+  if (t.status === 'CHECKED_IN') return true;
+  if (t.checkIn !== null && t.checkIn !== undefined) return true;
+  return false;
 }
 
 export function CheckInPage() {
   const { user } = useSession();
-  const [phase, setPhase]   = useState<Phase>('scan');
-  const [ticket, setTicket] = useState<WixTicket | null>(null);
+  const [phase, setPhase]     = useState<Phase>('scan');
+  const [scanKey, setScanKey] = useState(0);   // increment to force video remount
+  const [ticket, setTicket]   = useState<WixTicket | null>(null);
+  const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
   const [ticketNum, setTicketNum] = useState('');
-  const [err, setErr]       = useState<string | null>(null);
-  const [manual, setManual] = useState('');
-  const [busy, setBusy]     = useState(false);
+  const [err, setErr]         = useState<string | null>(null);
+  const [manual, setManual]   = useState('');
+  const [busy, setBusy]       = useState(false);
   const [camStatus, setCamStatus] = useState('Starting camera…');
   const videoRef    = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
 
-  // Start / stop camera whenever we enter the scan phase
+  // Start camera — re-runs whenever scanKey or phase changes.
+  // scanKey is incremented on reset so the video element remounts fresh.
   useEffect(() => {
     if (phase !== 'scan') return;
     const reader = new BrowserMultiFormatReader();
@@ -79,7 +89,7 @@ export function CheckInPage() {
       controlsRef.current?.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, scanKey]);
 
   async function handleCode(raw: string) {
     const tn = parseQr(raw);
@@ -87,18 +97,19 @@ export function CheckInPage() {
 
     setTicketNum(tn);
     setErr(null);
+    setShowRaw(false);
     setPhase('lookup');
     setBusy(true);
 
     try {
       const res  = await fetch(`/api/wix-checkin?ticket=${encodeURIComponent(tn)}`);
       const data = await res.json() as Record<string, unknown>;
+      setRawResponse(data);
       if (!res.ok) {
         setErr(String(data.error ?? 'Ticket lookup failed'));
         setPhase('scan');
         return;
       }
-      // Wix may return { ticket: {...} } or the ticket object directly
       const t = (data.ticket ?? data) as WixTicket;
       setTicket({ ...t, ticketNumber: t.ticketNumber ?? tn });
       setPhase('review');
@@ -116,7 +127,7 @@ export function CheckInPage() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch('/api/wix-checkin', {
+      const res  = await fetch('/api/wix-checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticketNumber: tn }),
@@ -136,7 +147,10 @@ export function CheckInPage() {
 
   function reset() {
     setPhase('scan');
+    setScanKey((k) => k + 1); // force video element to remount
     setTicket(null);
+    setRawResponse(null);
+    setShowRaw(false);
     setTicketNum('');
     setErr(null);
     setManual('');
@@ -146,12 +160,13 @@ export function CheckInPage() {
 
   if (!user) return <div className="p-6 text-slate-400">Sign in first.</div>;
 
-  const guestName      = ticket?.guestFullName ?? ticket?.orderFullName ?? '—';
-  const ticketType     = ticket?.name ?? 'Ticket';
-  const alreadyIn      = !!ticket?.checkIn;
-  const isCanceled     = !!ticket?.canceled;
-  const checkInTime    = typeof ticket?.checkIn === 'object' && ticket.checkIn
-    ? new Date(String(ticket.checkIn.created ?? '')).toLocaleString('en-US', {
+  const guestName  = ticket?.guestFullName ?? ticket?.orderFullName ?? '—';
+  const ticketType = ticket?.name ?? 'Ticket';
+  const alreadyIn  = ticket ? detectCheckedIn(ticket) : false;
+  const isCanceled = !!ticket?.canceled;
+  const checkInObj = ticket?.checkIn as Record<string, unknown> | null | undefined;
+  const checkInTime = checkInObj?.created
+    ? new Date(String(checkInObj.created)).toLocaleString('en-US', {
         timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'
       })
     : null;
@@ -168,7 +183,9 @@ export function CheckInPage() {
 
       {/* ── Scan phase ───────────────────────────────────── */}
       {phase === 'scan' && (
-        <div className="space-y-3">
+        // key={scanKey} forces this subtree (and the video element) to fully
+        // remount on every reset, giving ZXing a clean DOM node each time.
+        <div key={scanKey} className="space-y-3">
           <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
             <video
               ref={videoRef}
@@ -210,7 +227,6 @@ export function CheckInPage() {
       {/* ── Review phase ─────────────────────────────────── */}
       {phase === 'review' && ticket && (
         <div className="space-y-3">
-          {/* Status banner */}
           {isCanceled ? (
             <div className="bg-red-900 border-2 border-red-500 text-red-100 font-bold text-center py-4 rounded-2xl text-lg">
               ❌ TICKET CANCELED
@@ -228,7 +244,6 @@ export function CheckInPage() {
             </div>
           )}
 
-          {/* Ticket details card */}
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
             <div className="text-3xl font-bold mb-1 leading-tight">{guestName}</div>
             <div className="text-slate-300 text-lg">{ticketType}</div>
@@ -237,7 +252,6 @@ export function CheckInPage() {
             </div>
           </div>
 
-          {/* Buttons */}
           <div className="flex gap-2">
             <button
               onClick={reset}
@@ -254,7 +268,7 @@ export function CheckInPage() {
                 {busy ? 'Checking in…' : 'Check In ✓'}
               </button>
             )}
-            {alreadyIn && (
+            {(alreadyIn || isCanceled) && (
               <button
                 onClick={reset}
                 className="flex-[2] bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl"
@@ -263,6 +277,33 @@ export function CheckInPage() {
               </button>
             )}
           </div>
+
+          {/* Raw Wix response — for debugging field shapes */}
+          {rawResponse && (
+            <div className="mt-1">
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => setShowRaw(!showRaw)}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  {showRaw ? '− Hide' : '+ Show'} raw Wix response
+                </button>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(JSON.stringify(rawResponse, null, 2))}
+                  className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded"
+                >
+                  Copy
+                </button>
+              </div>
+              {showRaw && (
+                <textarea
+                  readOnly
+                  value={JSON.stringify(rawResponse, null, 2)}
+                  className="mt-1 w-full h-40 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs font-mono text-slate-300 resize-y"
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
 
