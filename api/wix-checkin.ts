@@ -124,16 +124,16 @@ export default async function handler(req: VReq, res: VRes) {
           // Correct endpoint: /events/v1/events/{eventId}/orders/{orderNumber}
           let ticketName: string | null = null;
           let orderCheckIn: Record<string, unknown> | null = null;
+          let orderDebug: unknown = null;
           const orderNum  = String(g.orderNumber ?? '');
           const gEventId  = String(g.eventId ?? eventId ?? '');
           if (orderNum && gEventId) {
             try {
-              const orRes = await fetch(
-                `${WIX_BASE}/events/v1/events/${encodeURIComponent(gEventId)}/orders/${encodeURIComponent(orderNum)}`,
-                { headers: getHeaders }
-              );
+              const orUrl = `${WIX_BASE}/events/v1/events/${encodeURIComponent(gEventId)}/orders/${encodeURIComponent(orderNum)}`;
+              const orRes = await fetch(orUrl, { headers: getHeaders });
+              const orBody = await orRes.json() as Record<string, unknown>;
+              orderDebug = { url: orUrl, status: orRes.status, body: orBody };
               if (orRes.ok) {
-                const orBody = await orRes.json() as Record<string, unknown>;
                 const order  = (orBody.order ?? orBody) as Record<string, unknown>;
                 const tickets = Array.isArray(order.tickets)
                   ? order.tickets as Record<string, unknown>[]
@@ -144,7 +144,9 @@ export default async function handler(req: VReq, res: VRes) {
                 if (matchedTicket?.name)    ticketName   = String(matchedTicket.name);
                 if (matchedTicket?.checkIn) orderCheckIn = matchedTicket.checkIn as Record<string, unknown>;
               }
-            } catch { /* order lookup failed — proceed without it */ }
+            } catch (e) {
+              orderDebug = { error: String(e) };
+            }
           }
 
           // "Already checked in" detection: prefer ticket-level checkIn from order;
@@ -164,7 +166,7 @@ export default async function handler(req: VReq, res: VRes) {
             orderStatus:   addl?.orderStatus,
             _source:       'guests/query',
           };
-          res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody });
+          res.status(200).json({ ticket, _endpoint: '/events/v2/guests/query', _raw: gqBody, _orderDebug: orderDebug });
           return;
         }
       }
