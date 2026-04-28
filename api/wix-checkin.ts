@@ -129,7 +129,7 @@ export default async function handler(req: VReq, res: VRes) {
           const gEventId  = String(g.eventId ?? eventId ?? '');
           if (orderNum && gEventId) {
             try {
-              const orUrl = `${WIX_BASE}/events/v1/events/${encodeURIComponent(gEventId)}/orders/${encodeURIComponent(orderNum)}`;
+              const orUrl = `${WIX_BASE}/events/v1/events/${encodeURIComponent(gEventId)}/orders/${encodeURIComponent(orderNum)}?fieldset=TICKETS&fieldset=FULL`;
               const orRes = await fetch(orUrl, { headers: getHeaders });
               const orBody = await orRes.json() as Record<string, unknown>;
               orderDebug = { url: orUrl, status: orRes.status, body: orBody };
