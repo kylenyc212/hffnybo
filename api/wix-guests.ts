@@ -72,6 +72,7 @@ export interface GuestRecord {
 
 async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
   const all: GuestRecord[] = [];
+  const byOrder = new Map<string, GuestRecord>(); // orderNumber → merged record
   const limit = 100;
 
   for (let page = 0; page < 50; page++) {
@@ -104,36 +105,55 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     const guests = data.guests ?? [];
 
     for (const g of guests) {
-      // Skip archived/cancelled orders
       if (g.additionalDetails?.archived) continue;
 
-      const gd = g.guestDetails ?? {};
+      const gd       = g.guestDetails ?? {};
       const firstName = (gd.firstName ?? '').trim();
       const lastName  = (gd.lastName  ?? '').trim();
-
-      // checkedIn: true if guestDetails says so, or attendanceStatus is arrived
+      const email     = (gd.email ?? '').trim();
       const checkedIn = gd.checkedIn === true || g.attendanceStatus === 'ARRIVED';
+      const orderNum  = g.orderNumber ?? g.id ?? '';
 
       const tickets = (g.tickets ?? [])
         .filter((t) => t.number)
         .map((t) => ({
-          number:    t.number!,
-          typeName:  t.name ?? 'Ticket',
+          number:   t.number!,
+          typeName: t.name ?? 'Ticket',
           checkedIn: t.guestDetails?.checkedIn ?? checkedIn,
         }));
 
-      all.push({
-        id:          g.id ?? '',
-        orderNumber: g.orderNumber ?? '',
-        firstName,
-        lastName,
-        email:       gd.email ?? '',
-        checkedIn,
-        tickets,
-      });
+      const existing = byOrder.get(orderNum);
+      if (existing) {
+        // Same order, different ticket slot — merge tickets in; keep first name found
+        if (!existing.firstName && firstName) existing.firstName = firstName;
+        if (!existing.lastName  && lastName)  existing.lastName  = lastName;
+        if (!existing.email     && email)      existing.email     = email;
+        for (const t of tickets) {
+          if (!existing.tickets.some((et) => et.number === t.number)) {
+            existing.tickets.push(t);
+          }
+        }
+      } else {
+        const record: GuestRecord = {
+          id: orderNum,
+          orderNumber: orderNum,
+          firstName,
+          lastName,
+          email,
+          checkedIn: false, // computed below
+          tickets,
+        };
+        byOrder.set(orderNum, record);
+        all.push(record);
+      }
     }
 
     if (guests.length < limit) break; // last page
+  }
+
+  // Compute overall checkedIn: true only when every ticket is checked in
+  for (const r of all) {
+    r.checkedIn = r.tickets.length > 0 && r.tickets.every((t) => t.checkedIn);
   }
 
   // Sort: unchecked-in first, then last name alpha
