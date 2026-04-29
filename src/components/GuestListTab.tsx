@@ -152,11 +152,16 @@ export function GuestListTab() {
           >
             <option value="">— Pick a Wix event —</option>
             {events.map((ev) => {
-              const prefix = ev.startDate
-                ? new Date(ev.startDate).toLocaleDateString('en-US', {
-                    timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric',
-                  }) + ' ' + fmtTime(ev.startDate) + ' — '
-                : '';
+              let prefix = '';
+              if (ev.startDate) {
+                // ISO date → "Wed 5/1 6:00 PM"
+                prefix = new Date(ev.startDate).toLocaleDateString('en-US', {
+                  timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric',
+                }) + ' ' + fmtTime(ev.startDate) + ' — ';
+              } else if (ev.startDateLabel) {
+                // Wix pre-formatted string (fallback)
+                prefix = ev.startDateLabel + ' — ';
+              }
               return (
                 <option key={ev.id} value={ev.id}>
                   {prefix}{ev.title}

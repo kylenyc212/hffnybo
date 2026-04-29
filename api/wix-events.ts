@@ -51,6 +51,11 @@ interface WixEvent {
   id: string;
   title?: string;
   status?: string;
+  // v3 API uses scheduling; v1/v2 used dateAndTimeSettings — check both
+  scheduling?: {
+    config?: { startDate?: string; endDate?: string };
+    formatted?: { start?: string; end?: string; dateAndTime?: string };
+  };
   dateAndTimeSettings?: {
     startDate?: string;
     dateAndTimeTbdMessage?: string;
@@ -105,10 +110,16 @@ function toSummary(ev: WixEvent) {
     id: ev.id,
     title: ev.title || '(untitled)',
     status: ev.status,
-    startDate: ev.dateAndTimeSettings?.startDate ?? null,
+    // v3 nests date under scheduling.config; v1/v2 used dateAndTimeSettings
+    startDate:
+      ev.scheduling?.config?.startDate ??
+      ev.dateAndTimeSettings?.startDate ??
+      null,
     startDateLabel:
+      ev.scheduling?.formatted?.dateAndTime ||
       ev.dateAndTimeSettings?.formatted?.dateAndTime ||
       ev.dateAndTimeSettings?.dateAndTimeTbdMessage ||
+      ev.scheduling?.config?.startDate ||
       ev.dateAndTimeSettings?.startDate ||
       null,
     registrationType: ev.registration?.type ?? null,
