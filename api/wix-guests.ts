@@ -76,18 +76,10 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
   let cursor: string | null = null;
 
   for (let page = 0; page < 50; page++) {
-    const paging: Record<string, unknown> = cursor
-      ? { cursor, limit: 100 }
-      : { limit: 100 };
-
-    const body = {
-      query: {
-        filter: { eventId },
-        sort: [{ fieldName: 'createdDate', order: 'ASC' }],
-        cursorPaging: paging,
-      },
-      fields: ['GUEST_DETAILS'],
-    };
+    // Wix: when resuming with a cursor, filter+sort must be omitted entirely
+    const body = cursor
+      ? { query: { cursorPaging: { cursor, limit: 100 } }, fields: ['GUEST_DETAILS'] }
+      : { query: { filter: { eventId }, sort: [{ fieldName: 'createdDate', order: 'ASC' }], cursorPaging: { limit: 100 } }, fields: ['GUEST_DETAILS'] };
 
     const res = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
       method: 'POST',
