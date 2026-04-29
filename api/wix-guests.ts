@@ -72,7 +72,7 @@ export interface GuestRecord {
 
 async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
   const all: GuestRecord[] = [];
-  // Use cursorPaging from the start — mixing paging+cursorPaging causes issues
+  const seen = new Set<string>(); // deduplicate by guest id
   let cursor: string | null = null;
 
   for (let page = 0; page < 50; page++) {
@@ -101,6 +101,11 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     for (const g of guests) {
       // Skip archived/cancelled orders
       if (g.additionalDetails?.archived) continue;
+      // Skip guests from other events (cursor pages don't re-apply the eventId filter)
+      if (g.eventId && g.eventId !== eventId) continue;
+      // Skip duplicates (can appear if cursor overlaps)
+      if (seen.has(g.id ?? '')) continue;
+      seen.add(g.id ?? '');
 
       const gd = g.guestDetails ?? {};
       const firstName = (gd.firstName ?? '').trim();
@@ -129,7 +134,10 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     }
 
     const nextCursor = data.pagingMetadata?.cursors?.next;
-    if (!nextCursor || guests.length < 100) break;
+    // Stop if no more pages, or if this page had no matching guests for our event
+    // (means the cursor has drifted into other events' records)
+    const matchedThisPage = guests.filter(g => !g.eventId || g.eventId === eventId).length;
+    if (!nextCursor || guests.length < 100 || matchedThisPage === 0) break;
     cursor = nextCursor;
   }
 
