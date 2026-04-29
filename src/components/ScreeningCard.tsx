@@ -96,12 +96,15 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
           </div>
         </div>
         {!alwaysAvailable && (
-          <div className="text-right text-xs shrink-0 space-y-1">
-            <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
-              {remaining} left · <span className="font-normal">{totalSold}/{screening.capacity}</span>
+          <div className="flex items-center gap-3 shrink-0">
+            {/* capacity column */}
+            <div className="text-right text-xs">
+              <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>{remaining} left</div>
+              <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>{totalSold}/{screening.capacity}</div>
             </div>
-            <div className="flex items-center justify-end gap-1.5">
-              <span className="text-orange-400">{screening.checkin_count} ✓</span>
+            {/* check-in column */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-orange-400 text-xs">{screening.checkin_count} ✓</span>
               <button
                 onClick={async () => {
                   if (!user) return;
