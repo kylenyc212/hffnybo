@@ -51,16 +51,18 @@ export default async function handler(req: VReq, res: VRes) {
     }
 
     if (type === 'guest' && eventId) {
+      const offset = Number(Array.isArray(req.query?.offset) ? req.query!.offset[0] : req.query?.offset ?? '0');
       const r = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
         method: 'POST',
         headers: getHeaders(true),
         body: JSON.stringify({
-          query: { filter: { eventId }, paging: { limit: 1 } },
+          query: { filter: { eventId }, paging: { limit: 100, offset }, sort: [{ fieldName: 'createdDate', order: 'ASC' }] },
           fields: ['GUEST_DETAILS'],
         }),
       });
-      const data = await r.json();
-      res.status(r.status).json(data);
+      const data = await r.json() as Record<string, unknown>;
+      const guests = Array.isArray(data.guests) ? data.guests as unknown[] : [];
+      res.status(r.status).json({ pagingMetadata: data.pagingMetadata, guestsReturned: guests.length, offset });
       return;
     }
 
