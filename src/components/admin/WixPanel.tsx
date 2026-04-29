@@ -245,7 +245,7 @@ export function WixPanel() {
       </div>
 
       <UnmappedScreenings screenings={screenings} />
-      <CapacityDashboard />
+      <CapacityDashboard wixEvents={wixEvents} screeningByWixId={screeningByWixId} />
     </div>
   );
 }
@@ -277,7 +277,13 @@ function UnmappedScreenings({ screenings }: { screenings: ScreeningRow[] }) {
   );
 }
 
-function CapacityDashboard() {
+function CapacityDashboard({
+  wixEvents,
+  screeningByWixId,
+}: {
+  wixEvents: WixEventSummary[];
+  screeningByWixId: Map<string, ScreeningRow>;
+}) {
   const [rows, setRows] = useState<ScreeningWithSold[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -293,40 +299,54 @@ function CapacityDashboard() {
 
   useEffect(() => { load(); }, []);
 
+  // Build a map: screening id → Wix events mapped to it
+  const wixEventsByScreening = useMemo(() => {
+    const m = new Map<string, WixEventSummary[]>();
+    for (const ev of wixEvents) {
+      const s = screeningByWixId.get(ev.id);
+      if (!s) continue;
+      const list = m.get(s.id) ?? [];
+      list.push(ev);
+      m.set(s.id, list);
+    }
+    return m;
+  }, [wixEvents, screeningByWixId]);
+
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-2">
         <div>
           <div className="text-lg font-semibold">Capacity dashboard</div>
           <div className="text-xs text-slate-400 mt-0.5">
-            All screenings — Wix online sales + BO in-person sales vs. capacity.
+            Wix online + BO door sales vs. capacity. <span className="text-amber-400">Amber</span> = ≥80% full · <span className="text-red-400">Red</span> = sold out.
+            Wix doesn't expose its per-ticket limit via API — use the <span className="text-sky-400">↗ Wix</span> link to open the event and bump the limit.
           </div>
         </div>
         <button
           onClick={load}
           disabled={loading}
-          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold px-3 py-1.5 rounded-lg"
+          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold px-3 py-1.5 rounded-lg shrink-0"
         >
           {loading ? 'Loading…' : '↻ Refresh'}
         </button>
       </div>
 
       {loading ? (
-        <div className="text-slate-500 text-sm">Loading…</div>
+        <div className="text-slate-500 text-sm mt-3">Loading…</div>
       ) : rows.length === 0 ? (
-        <div className="text-slate-500 text-sm">No screenings found.</div>
+        <div className="text-slate-500 text-sm mt-3">No screenings found.</div>
       ) : (
-        <div className="overflow-x-auto -mx-2">
+        <div className="overflow-x-auto -mx-2 mt-3">
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-400 border-b border-slate-700">
               <tr>
                 <th className="text-left font-normal py-2 px-2">Screening</th>
-                <th className="text-left font-normal py-2 px-2">Ticket types</th>
-                <th className="text-right font-normal py-2 px-2">Wix</th>
-                <th className="text-right font-normal py-2 px-2">BO</th>
-                <th className="text-right font-normal py-2 px-2">Total</th>
-                <th className="text-right font-normal py-2 px-2">Cap</th>
+                <th className="text-left font-normal py-2 px-2">Types</th>
+                <th className="text-right font-normal py-2 px-2">Wix sold</th>
+                <th className="text-right font-normal py-2 px-2">BO sold</th>
+                <th className="text-right font-normal py-2 px-2">Total / Cap</th>
                 <th className="text-right font-normal py-2 px-2">Left</th>
+                <th className="text-right font-normal py-2 px-2">Wix</th>
               </tr>
             </thead>
             <tbody>
@@ -337,8 +357,10 @@ function CapacityDashboard() {
                 const soldOut = remaining === 0;
                 const nearFull = !soldOut && pct >= 0.8;
                 const paidTypes = s.ticket_types.filter((t) => t.category === 'paid');
+                const mapped = wixEventsByScreening.get(s.id) ?? [];
+                const wixSoldOut = mapped.some((e) => e.soldOut);
                 return (
-                  <tr key={s.id} className={`border-t border-slate-700 ${soldOut ? 'bg-red-950/30' : nearFull ? 'bg-amber-950/20' : ''}`}>
+                  <tr key={s.id} className={`border-t border-slate-700 ${soldOut || wixSoldOut ? 'bg-red-950/30' : nearFull ? 'bg-amber-950/20' : ''}`}>
                     <td className="py-2 px-2">
                       <div className="font-semibold leading-tight">{s.title}</div>
                       <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
@@ -354,14 +376,39 @@ function CapacityDashboard() {
                         ))}
                       </div>
                     </td>
-                    <td className="py-2 px-2 text-right tabular-nums text-slate-300">{s.online_sold}</td>
+                    <td className="py-2 px-2 text-right tabular-nums">
+                      <div>{s.online_sold}</div>
+                      {wixSoldOut && (
+                        <div className="text-red-400 text-xs font-bold">SOLD OUT</div>
+                      )}
+                    </td>
                     <td className="py-2 px-2 text-right tabular-nums text-slate-300">{s.sold_in_person}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-semibold">{total}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-slate-400">{s.capacity}</td>
+                    <td className="py-2 px-2 text-right tabular-nums font-semibold">
+                      {total} / {s.capacity}
+                    </td>
                     <td className={`py-2 px-2 text-right tabular-nums font-bold ${
                       soldOut ? 'text-red-400' : nearFull ? 'text-amber-400' : 'text-emerald-400'
                     }`}>
                       {soldOut ? 'SOLD OUT' : remaining}
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      {mapped.length > 0 ? (
+                        <div className="flex flex-col gap-0.5 items-end">
+                          {mapped.map((ev) => (
+                            <a
+                              key={ev.id}
+                              href={`https://manage.wix.com/events/event-dashboard/${ev.id}/tickets`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-sky-400 hover:text-sky-300 whitespace-nowrap"
+                            >
+                              ↗ Wix
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-slate-600 text-xs">—</span>
+                      )}
                     </td>
                   </tr>
                 );
