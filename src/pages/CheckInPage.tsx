@@ -90,6 +90,12 @@ export function CheckInPage() {
 
   useEffect(() => { refreshCounts(); }, []);
 
+  // Poll every 15 s so counts stay fresh across devices without a manual reload.
+  useEffect(() => {
+    const id = setInterval(refreshCounts, 15_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (phase !== 'scan') return;
     const reader = new BrowserMultiFormatReader();

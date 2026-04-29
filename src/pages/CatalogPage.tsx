@@ -36,6 +36,17 @@ export function CatalogPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // Poll every 20 s so sold counts and check-in counts stay fresh across devices.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const data = await loadScreenings(FESTIVAL_FROM, FESTIVAL_TO);
+        setScreenings(data);
+      } catch { /* silent — stale data is acceptable */ }
+    }, 20_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Optimistic sold-count bump so "X left" updates immediately when a ticket is added.
   const bumpSold = (screeningId: string, qty: number) => {
     setScreenings((prev) =>
