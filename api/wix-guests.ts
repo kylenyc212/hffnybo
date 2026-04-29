@@ -72,14 +72,19 @@ export interface GuestRecord {
 
 async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
   const all: GuestRecord[] = [];
-  const seen = new Set<string>(); // deduplicate by guest id
-  let cursor: string | null = null;
+  const limit = 100;
 
   for (let page = 0; page < 50; page++) {
-    // Wix: when resuming with a cursor, filter+sort must be omitted entirely
-    const body = cursor
-      ? { query: { cursorPaging: { cursor, limit: 100 } }, fields: ['GUEST_DETAILS'] }
-      : { query: { filter: { eventId }, sort: [{ fieldName: 'createdDate', order: 'ASC' }], cursorPaging: { limit: 100 } }, fields: ['GUEST_DETAILS'] };
+    // Use offset-based paging so the eventId filter can be sent on every request.
+    // Cursor-based paging strips the filter on page 2+, causing cross-event bleed.
+    const body = {
+      query: {
+        filter: { eventId },
+        sort: [{ fieldName: 'createdDate', order: 'ASC' }],
+        paging: { limit, offset: page * limit },
+      },
+      fields: ['GUEST_DETAILS'],
+    };
 
     const res = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
       method: 'POST',
@@ -93,7 +98,7 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
 
     const data = await res.json() as {
       guests?: WixGuest[];
-      pagingMetadata?: { cursors?: { next?: string } };
+      pagingMetadata?: { count?: number; total?: number };
     };
 
     const guests = data.guests ?? [];
@@ -101,11 +106,6 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     for (const g of guests) {
       // Skip archived/cancelled orders
       if (g.additionalDetails?.archived) continue;
-      // Skip guests from other events (cursor pages don't re-apply the eventId filter)
-      if (g.eventId && g.eventId !== eventId) continue;
-      // Skip duplicates (can appear if cursor overlaps)
-      if (seen.has(g.id ?? '')) continue;
-      seen.add(g.id ?? '');
 
       const gd = g.guestDetails ?? {};
       const firstName = (gd.firstName ?? '').trim();
@@ -133,12 +133,7 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
       });
     }
 
-    const nextCursor = data.pagingMetadata?.cursors?.next;
-    // Stop if no more pages, or if this page had no matching guests for our event
-    // (means the cursor has drifted into other events' records)
-    const matchedThisPage = guests.filter(g => !g.eventId || g.eventId === eventId).length;
-    if (!nextCursor || guests.length < 100 || matchedThisPage === 0) break;
-    cursor = nextCursor;
+    if (guests.length < limit) break; // last page
   }
 
   // Sort: unchecked-in first, then last name alpha
