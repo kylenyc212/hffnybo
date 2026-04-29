@@ -8,7 +8,8 @@ import {
   type WixEventSummary
 } from '../../lib/wix';
 import type { ScreeningRow } from '../../lib/database.types';
-import { fmtWhen } from '../../lib/datetime';
+import { fmtWhen, fmtTime } from '../../lib/datetime';
+import { loadScreenings, type ScreeningWithSold } from '../../lib/queries';
 
 export function WixPanel() {
   const [wixEvents, setWixEvents] = useState<WixEventSummary[]>([]);
@@ -244,6 +245,7 @@ export function WixPanel() {
       </div>
 
       <UnmappedScreenings screenings={screenings} />
+      <CapacityDashboard />
     </div>
   );
 }
@@ -271,6 +273,103 @@ function UnmappedScreenings({ screenings }: { screenings: ScreeningRow[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function CapacityDashboard() {
+  const [rows, setRows] = useState<ScreeningWithSold[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const data = await loadScreenings('2026-01-01', '2027-01-01');
+      setRows(data.filter((s) => !s.is_always_available));
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div>
+          <div className="text-lg font-semibold">Capacity dashboard</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            All screenings — Wix online sales + BO in-person sales vs. capacity.
+          </div>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold px-3 py-1.5 rounded-lg"
+        >
+          {loading ? 'Loading…' : '↻ Refresh'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-slate-500 text-sm">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-slate-500 text-sm">No screenings found.</div>
+      ) : (
+        <div className="overflow-x-auto -mx-2">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-slate-400 border-b border-slate-700">
+              <tr>
+                <th className="text-left font-normal py-2 px-2">Screening</th>
+                <th className="text-left font-normal py-2 px-2">Ticket types</th>
+                <th className="text-right font-normal py-2 px-2">Wix</th>
+                <th className="text-right font-normal py-2 px-2">BO</th>
+                <th className="text-right font-normal py-2 px-2">Total</th>
+                <th className="text-right font-normal py-2 px-2">Cap</th>
+                <th className="text-right font-normal py-2 px-2">Left</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const total = s.online_sold + s.sold_in_person;
+                const remaining = Math.max(0, s.capacity - total);
+                const pct = s.capacity > 0 ? total / s.capacity : 0;
+                const soldOut = remaining === 0;
+                const nearFull = !soldOut && pct >= 0.8;
+                const paidTypes = s.ticket_types.filter((t) => t.category === 'paid');
+                return (
+                  <tr key={s.id} className={`border-t border-slate-700 ${soldOut ? 'bg-red-950/30' : nearFull ? 'bg-amber-950/20' : ''}`}>
+                    <td className="py-2 px-2">
+                      <div className="font-semibold leading-tight">{s.title}</div>
+                      <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
+                    </td>
+                    <td className="py-2 px-2">
+                      <div className="flex flex-wrap gap-1">
+                        {paidTypes.length === 0 ? (
+                          <span className="text-slate-500 text-xs">—</span>
+                        ) : paidTypes.map((t) => (
+                          <span key={t.id} className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                            {t.label}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="py-2 px-2 text-right tabular-nums text-slate-300">{s.online_sold}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-slate-300">{s.sold_in_person}</td>
+                    <td className="py-2 px-2 text-right tabular-nums font-semibold">{total}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-slate-400">{s.capacity}</td>
+                    <td className={`py-2 px-2 text-right tabular-nums font-bold ${
+                      soldOut ? 'text-red-400' : nearFull ? 'text-amber-400' : 'text-emerald-400'
+                    }`}>
+                      {soldOut ? 'SOLD OUT' : remaining}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
