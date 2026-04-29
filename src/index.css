@@ -13,3 +13,7 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 
 /* Bigger hit targets for iPad */
 button, .tap { min-height: 44px; }
+
+/* iOS safe-area helpers — notch / Dynamic Island top + home-indicator bottom */
+.safe-top    { padding-top:    env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }

@@ -19,7 +19,7 @@ export default function App() {
   return (
     <LoginGate>
       <div className="flex flex-col h-full">
-        <header className="flex items-center justify-between bg-slate-950 border-b border-slate-800">
+        <header className="flex items-center justify-between bg-slate-950 border-b border-slate-800 safe-top">
           <nav className="flex overflow-x-auto shrink min-w-0">
             <NavLink to="/catalog" className={tabClass}>Screenings</NavLink>
             <NavLink to="/cart" className={tabClass}>Cart</NavLink>
@@ -49,7 +49,7 @@ export default function App() {
             )}
           </div>
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto safe-bottom">
           <Routes>
             <Route path="/" element={<Navigate to="/catalog" replace />} />
             <Route path="/catalog" element={<CatalogPage />} />
