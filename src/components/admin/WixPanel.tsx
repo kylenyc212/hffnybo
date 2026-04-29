@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchWixEvents,
+  fetchWixTicketDefs,
   moveWixEventMapping,
   syncWixSoldNow,
   timeAgo,
   listScreeningsForMapping,
-  type WixEventSummary
+  type WixEventSummary,
+  type TicketDefSummary,
 } from '../../lib/wix';
 import type { ScreeningRow } from '../../lib/database.types';
 import { fmtWhen, fmtTime } from '../../lib/datetime';
@@ -285,13 +287,18 @@ function CapacityDashboard({
   screeningByWixId: Map<string, ScreeningRow>;
 }) {
   const [rows, setRows] = useState<ScreeningWithSold[]>([]);
+  const [ticketDefs, setTicketDefs] = useState<Record<string, TicketDefSummary[]>>({});
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const data = await loadScreenings('2026-01-01', '2027-01-01');
+      const [data, defs] = await Promise.all([
+        loadScreenings('2026-01-01', '2027-01-01'),
+        fetchWixTicketDefs().catch(() => ({} as Record<string, TicketDefSummary[]>)),
+      ]);
       setRows(data.filter((s) => !s.is_always_available));
+      setTicketDefs(defs);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
@@ -356,25 +363,43 @@ function CapacityDashboard({
                 const pct = s.capacity > 0 ? total / s.capacity : 0;
                 const soldOut = remaining === 0;
                 const nearFull = !soldOut && pct >= 0.8;
-                const paidTypes = s.ticket_types.filter((t) => t.category === 'paid');
                 const mapped = wixEventsByScreening.get(s.id) ?? [];
                 const wixSoldOut = mapped.some((e) => e.soldOut);
+                // Collect all ticket definitions for mapped Wix events
+                const allDefs = mapped.flatMap((ev) => ticketDefs[ev.id] ?? []);
+                const limitedDefs = allDefs.filter((d) => d.limited && d.limit !== null);
                 return (
-                  <tr key={s.id} className={`border-t border-slate-700 ${soldOut || wixSoldOut ? 'bg-red-950/30' : nearFull ? 'bg-amber-950/20' : ''}`}>
+                  <tr key={s.id} className={`border-t border-slate-700 align-top ${soldOut || wixSoldOut ? 'bg-red-950/30' : nearFull ? 'bg-amber-950/20' : ''}`}>
                     <td className="py-2 px-2">
                       <div className="font-semibold leading-tight">{s.title}</div>
                       <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
                     </td>
                     <td className="py-2 px-2">
-                      <div className="flex flex-wrap gap-1">
-                        {paidTypes.length === 0 ? (
-                          <span className="text-slate-500 text-xs">—</span>
-                        ) : paidTypes.map((t) => (
-                          <span key={t.id} className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
-                            {t.label}
-                          </span>
-                        ))}
-                      </div>
+                      {limitedDefs.length > 0 ? (
+                        <div className="space-y-1">
+                          {limitedDefs.map((d) => (
+                            <div key={d.id} className="flex items-center gap-2">
+                              <span className="text-xs text-slate-300">{d.name}</span>
+                              <span className={`text-xs font-bold tabular-nums ${
+                                d.limit! <= 5 ? 'text-red-400' : d.limit! <= 15 ? 'text-amber-400' : 'text-slate-400'
+                              }`}>
+                                {d.limit} limit
+                              </span>
+                            </div>
+                          ))}
+                          {allDefs.filter((d) => !d.limited).map((d) => (
+                            <div key={d.id} className="text-xs text-slate-500">{d.name} · no limit</div>
+                          ))}
+                        </div>
+                      ) : allDefs.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {allDefs.map((d) => (
+                            <div key={d.id} className="text-xs text-slate-500">{d.name}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-600">—</span>
+                      )}
                     </td>
                     <td className="py-2 px-2 text-right tabular-nums">
                       <div>{s.online_sold}</div>

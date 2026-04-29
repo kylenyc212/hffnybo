@@ -138,6 +138,25 @@ export async function syncWixSoldNow(events: WixEventSummary[]): Promise<{
   return { updated, changes };
 }
 
+export interface TicketDefSummary {
+  id: string;
+  eventId: string;
+  name: string;
+  price: string | null;
+  limited: boolean;
+  limit: number | null;
+  saleStatus: string;
+  sortIndex: number;
+}
+
+/** Fetch per-type ticket definitions (limits) from Wix for all events. */
+export async function fetchWixTicketDefs(): Promise<Record<string, TicketDefSummary[]>> {
+  const res = await fetch('/api/wix-ticket-defs');
+  if (!res.ok) throw new Error(`Ticket defs failed (${res.status})`);
+  const data = await res.json() as { byEvent: Record<string, TicketDefSummary[]> };
+  return data.byEvent;
+}
+
 /** Pretty timestamp helper for "X minutes ago" display. */
 export function timeAgo(iso: string | null): string {
   if (!iso) return 'never';
