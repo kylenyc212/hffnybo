@@ -110,17 +110,12 @@ function toSummary(ev: WixEvent) {
     id: ev.id,
     title: ev.title || '(untitled)',
     status: ev.status,
-    // v3 nests date under scheduling.config; v1/v2 used dateAndTimeSettings
-    startDate:
-      ev.scheduling?.config?.startDate ??
-      ev.dateAndTimeSettings?.startDate ??
-      null,
+      // Wix returns the human-readable date in formatted.dateAndTime or dateAndTimeTbdMessage.
+    // There is no machine-readable startDate field in the v3 API response.
+    startDate: ev.dateAndTimeSettings?.startDate ?? null,
     startDateLabel:
-      ev.scheduling?.formatted?.dateAndTime ||
       ev.dateAndTimeSettings?.formatted?.dateAndTime ||
       ev.dateAndTimeSettings?.dateAndTimeTbdMessage ||
-      ev.scheduling?.config?.startDate ||
-      ev.dateAndTimeSettings?.startDate ||
       null,
     registrationType: ev.registration?.type ?? null,
     isFree,
@@ -141,10 +136,13 @@ export default async function handler(req: VReq, res: VRes) {
     }
     const events = await listUpcomingWixEvents();
     const summaries = events.map(toSummary);
+    // startDate is always null in v3 API; parse startDateLabel for chronological sort
     summaries.sort((a, b) => {
-      if (a.startDate && b.startDate) return a.startDate.localeCompare(b.startDate);
-      if (a.startDate) return -1;
-      if (b.startDate) return 1;
+      const da = a.startDateLabel ? new Date(a.startDateLabel).getTime() : NaN;
+      const db = b.startDateLabel ? new Date(b.startDateLabel).getTime() : NaN;
+      if (!isNaN(da) && !isNaN(db)) return da - db;
+      if (!isNaN(da)) return -1;
+      if (!isNaN(db)) return 1;
       return a.title.localeCompare(b.title);
     });
     res.status(200).json({

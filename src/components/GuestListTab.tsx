@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { WixEventSummary } from '../lib/wix';
 import { fetchWixEvents } from '../lib/wix';
-import { fmtTime } from '../lib/datetime';
 
 interface GuestTicket {
   number: string;
@@ -151,23 +150,11 @@ export function GuestListTab() {
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm"
           >
             <option value="">— Pick a Wix event —</option>
-            {events.map((ev) => {
-              let prefix = '';
-              if (ev.startDate) {
-                // ISO date → "Wed 5/1 6:00 PM"
-                prefix = new Date(ev.startDate).toLocaleDateString('en-US', {
-                  timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric',
-                }) + ' ' + fmtTime(ev.startDate) + ' — ';
-              } else if (ev.startDateLabel) {
-                // Wix pre-formatted string (fallback)
-                prefix = ev.startDateLabel + ' — ';
-              }
-              return (
-                <option key={ev.id} value={ev.id}>
-                  {prefix}{ev.title}
-                </option>
-              );
-            })}
+            {events.map((ev) => (
+              <option key={ev.id} value={ev.id}>
+                {ev.startDateLabel ? `${ev.startDateLabel} — ` : ''}{ev.title}
+              </option>
+            ))}
           </select>
         )}
       </div>

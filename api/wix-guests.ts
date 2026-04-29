@@ -1,7 +1,8 @@
 // GET /api/wix-guests?eventId=xxx
-// Returns all attendees for a Wix event, one record per ORDER (the buyer).
-// Names come from the order's contactDetails — the only reliable name source
-// for ticketed (non-RSVP) events. CheckedIn status comes from per-ticket checkIn.
+// Returns all attendees for a Wix event via v2/guests/query.
+// One record per guest. Names come from guestDetails.firstName/lastName
+// (populated for the buyer; may be blank for additional unnamed guests in an order).
+// CheckedIn from guestDetails.checkedIn + attendanceStatus.
 
 interface VReq {
   method?: string;
@@ -19,40 +20,44 @@ function getCreds() {
   return { apiKey, accountId, siteId };
 }
 
-function wixHeaders(): Record<string, string> {
+function wixHeaders(contentType = false): Record<string, string> {
   const { apiKey, accountId, siteId } = getCreds();
-  return {
+  const h: Record<string, string> = {
     Authorization:    apiKey,
     'wix-account-id': accountId,
     'wix-site-id':    siteId,
   };
+  if (contentType) h['Content-Type'] = 'application/json';
+  return h;
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface WixOrderTicket {
-  ticketNumber?: string;
+interface WixGuestTicket {
+  number?: string;
+  definitionId?: string;
   name?: string;
-  checkIn?: { created?: string } | null;
-  status?: string;
-  archived?: boolean;
+  guestDetails?: { checkedIn?: boolean };
 }
 
-interface WixOrder {
+interface WixGuest {
+  id?: string;
+  eventId?: string;
   orderNumber?: string;
-  status?: string;
-  // Buyer name can live in a few places depending on API version:
-  buyer?: {
+  tickets?: WixGuestTicket[];
+  contactId?: string;
+  guestDetails?: {
+    firstName?: string;
+    lastName?: string;
     email?: string;
-    contactDetails?: {
-      firstName?: string; lastName?: string; email?: string; phone?: string;
-    };
+    phone?: string;
+    checkedIn?: boolean;
   };
-  // Some versions put contactDetails at root level
-  contactDetails?: {
-    firstName?: string; lastName?: string; email?: string; phone?: string;
+  attendanceStatus?: string;   // "ATTENDING" | "NOT_ATTENDING" | "WAITLIST"
+  guestType?: string;          // "BUYER" | "GUEST"
+  createdDate?: string;
+  additionalDetails?: {
+    orderStatus?: string;
+    archived?: boolean;
   };
-  tickets?: WixOrderTicket[];
 }
 
 export interface GuestRecord {
@@ -61,189 +66,90 @@ export interface GuestRecord {
   firstName: string;
   lastName: string;
   email: string;
-  /** true only when every ticket in the order is checked in */
   checkedIn: boolean;
   tickets: { number: string; typeName: string; checkedIn: boolean }[];
 }
 
-// ── Fetchers ─────────────────────────────────────────────────────────────────
-
-async function fetchAllOrders(eventId: string): Promise<WixOrder[]> {
-  const headers = wixHeaders();
-  const all: WixOrder[] = [];
-  let offset = 0;
-  const limit = 100;
+async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
+  const all: GuestRecord[] = [];
+  // Use cursorPaging from the start — mixing paging+cursorPaging causes issues
+  let cursor: string | null = null;
 
   for (let page = 0; page < 50; page++) {
-    const url = `${WIX_BASE}/events/v1/events/${encodeURIComponent(eventId)}/orders?limit=${limit}&offset=${offset}`;
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      // Swallow errors — caller will fall back to guest list
-      console.error(`[wix-guests] orders fetch ${res.status}:`, await res.text().catch(() => ''));
-      break;
-    }
-    const data = await res.json() as { orders?: WixOrder[]; total?: number };
-    const batch = data.orders ?? [];
-    all.push(...batch);
-    if (batch.length < limit) break;
-    offset += limit;
-  }
-  return all;
-}
+    const paging: Record<string, unknown> = cursor
+      ? { cursor, limit: 100 }
+      : { limit: 100 };
 
-/** Fallback: v2 guests query — used when orders endpoint doesn't have names. */
-async function fetchRawGuests(eventId: string): Promise<{
-  orderNumber: string;
-  guestDetails: Record<string, unknown> | null;
-  attendanceStatus?: string;
-  tickets: WixOrderTicket[];
-}[]> {
-  const all: ReturnType<typeof fetchRawGuests> extends Promise<infer T> ? T : never = [];
-  let cursor: string | undefined;
-
-  for (let page = 0; page < 50; page++) {
-    const body: Record<string, unknown> = {
+    const body = {
       query: {
         filter: { eventId },
         sort: [{ fieldName: 'createdDate', order: 'ASC' }],
+        cursorPaging: paging,
       },
       fields: ['GUEST_DETAILS'],
     };
-    if (cursor) {
-      (body.query as Record<string, unknown>).cursorPaging = { cursor, limit: 100 };
-    } else {
-      (body.query as Record<string, unknown>).paging = { limit: 100 };
-    }
 
     const res = await fetch(`${WIX_BASE}/events/v2/guests/query`, {
       method: 'POST',
-      headers: { ...wixHeaders(), 'Content-Type': 'application/json' },
+      headers: wixHeaders(true),
       body: JSON.stringify(body),
     });
-    if (!res.ok) break;
+
+    if (!res.ok) {
+      throw new Error(`Wix guests ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
 
     const data = await res.json() as {
-      guests?: Array<{
-        orderNumber?: string;
-        attendanceStatus?: string;
-        guestDetails?: Record<string, unknown>;
-        tickets?: WixOrderTicket[];
-      }>;
+      guests?: WixGuest[];
       pagingMetadata?: { cursors?: { next?: string } };
     };
+
     const guests = data.guests ?? [];
+
     for (const g of guests) {
+      // Skip archived/cancelled orders
+      if (g.additionalDetails?.archived) continue;
+
+      const gd = g.guestDetails ?? {};
+      const firstName = (gd.firstName ?? '').trim();
+      const lastName  = (gd.lastName  ?? '').trim();
+
+      // checkedIn: true if guestDetails says so, or attendanceStatus is arrived
+      const checkedIn = gd.checkedIn === true || g.attendanceStatus === 'ARRIVED';
+
+      const tickets = (g.tickets ?? [])
+        .filter((t) => t.number)
+        .map((t) => ({
+          number:    t.number!,
+          typeName:  t.name ?? 'Ticket',
+          checkedIn: t.guestDetails?.checkedIn ?? checkedIn,
+        }));
+
       all.push({
+        id:          g.id ?? '',
         orderNumber: g.orderNumber ?? '',
-        guestDetails: g.guestDetails ?? null,
-        attendanceStatus: g.attendanceStatus,
-        tickets: g.tickets ?? [],
+        firstName,
+        lastName,
+        email:       gd.email ?? '',
+        checkedIn,
+        tickets,
       });
     }
 
-    const next = data.pagingMetadata?.cursors?.next;
-    if (!next || guests.length < 100) break;
-    cursor = next;
-  }
-  return all;
-}
-
-// ── Main builder ─────────────────────────────────────────────────────────────
-
-async function buildGuestRecords(eventId: string): Promise<GuestRecord[]> {
-  // Fetch both in parallel
-  const [orders, rawGuests] = await Promise.all([
-    fetchAllOrders(eventId),
-    fetchRawGuests(eventId),
-  ]);
-
-  // Build order-level records (primary source for names + tickets)
-  const records = new Map<string, GuestRecord>();
-
-  for (const order of orders) {
-    const num = order.orderNumber ?? '';
-    if (!num) continue;
-
-    // Try several field paths for buyer name
-    const cd = order.buyer?.contactDetails ?? order.contactDetails ?? {};
-    const firstName = cd.firstName ?? '';
-    const lastName  = cd.lastName  ?? '';
-    const email     = cd.email ?? order.buyer?.email ?? '';
-
-    const tickets = (order.tickets ?? [])
-      .filter((t) => t.ticketNumber && t.status !== 'CANCELLED' && !t.archived)
-      .map((t) => ({
-        number:    t.ticketNumber!,
-        typeName:  t.name ?? 'Ticket',
-        // checkIn is null/missing when not yet checked in, an object when done
-        checkedIn: t.checkIn !== null && t.checkIn !== undefined,
-      }));
-
-    records.set(num, {
-      id:          num,
-      orderNumber: num,
-      firstName,
-      lastName,
-      email,
-      checkedIn:   tickets.length > 0 && tickets.every((t) => t.checkedIn),
-      tickets,
-    });
+    const nextCursor = data.pagingMetadata?.cursors?.next;
+    if (!nextCursor || guests.length < 100) break;
+    cursor = nextCursor;
   }
 
-  // Merge in guest-level checkedIn status (v2 guests is more authoritative for door status)
-  // and fill in names for orders where contactDetails was empty
-  const guestsByOrder = new Map<string, typeof rawGuests>();
-  for (const g of rawGuests) {
-    const key = g.orderNumber;
-    if (!guestsByOrder.has(key)) guestsByOrder.set(key, []);
-    guestsByOrder.get(key)!.push(g);
-  }
-
-  for (const [orderNum, guestList] of guestsByOrder.entries()) {
-    const record = records.get(orderNum);
-    if (!record) continue; // order not in orders list (shouldn't happen)
-
-    // If we still have no name, try guest details (RSVP-style events)
-    if (!record.firstName && !record.lastName) {
-      for (const g of guestList) {
-        const gd = g.guestDetails ?? {};
-        // Try firstName/lastName (RSVP) and name.first/last (some paid ticket formats)
-        const nameObj = gd.name as Record<string, unknown> | undefined;
-        const fn = (gd.firstName ?? nameObj?.first ?? '') as string;
-        const ln = (gd.lastName  ?? nameObj?.last  ?? '') as string;
-        if (fn || ln) {
-          record.firstName = fn;
-          record.lastName  = ln;
-          record.email     = (gd.email as string | undefined) ?? record.email;
-          break;
-        }
-      }
-    }
-
-    // Update per-ticket checkedIn using attendance status from guests endpoint
-    for (const g of guestList) {
-      const attended = g.attendanceStatus === 'ATTENDED';
-      if (!attended) continue;
-      for (const gt of g.tickets ?? []) {
-        if (!gt.ticketNumber) continue;
-        const t = record.tickets.find((rt) => rt.number === gt.ticketNumber);
-        if (t) t.checkedIn = true;
-      }
-    }
-
-    // Recompute overall checkedIn
-    record.checkedIn = record.tickets.length > 0 && record.tickets.every((t) => t.checkedIn);
-  }
-
-  // Sort: checked-in at bottom, then alphabetical by last name
-  return [...records.values()].sort((a, b) => {
+  // Sort: unchecked-in first, then last name alpha
+  all.sort((a, b) => {
     if (a.checkedIn !== b.checkedIn) return a.checkedIn ? 1 : -1;
     const ln = a.lastName.localeCompare(b.lastName);
     return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName);
   });
-}
 
-// ── Handler ───────────────────────────────────────────────────────────────────
+  return all;
+}
 
 export default async function handler(req: VReq, res: VRes) {
   try {
@@ -252,13 +158,13 @@ export default async function handler(req: VReq, res: VRes) {
       return;
     }
     const eventId = Array.isArray(req.query?.eventId)
-      ? req.query.eventId[0]
+      ? req.query!.eventId[0]
       : req.query?.eventId;
     if (!eventId) {
       res.status(400).json({ error: 'eventId required' });
       return;
     }
-    const guests = await buildGuestRecords(eventId);
+    const guests = await fetchAllGuests(eventId);
     res.status(200).json({ guests, total: guests.length });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Failed';
