@@ -6,10 +6,10 @@ import { money, toCents } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { getOpenDrawer } from '../lib/drawer';
 import { checkout } from '../lib/checkout';
-import type { CashDrawerRow, OrderLineRow } from '../lib/database.types';
+import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
-import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
+import { getCheckinLinesForOrder, checkInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -27,7 +27,7 @@ export function CartPage() {
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string } | null>(null);
-  const [checkoutLines, setCheckoutLines] = useState<OrderLineRow[] | null>(null);
+  const [checkoutLines, setCheckoutLines] = useState<OrderLineWithScreening[] | null>(null);
   const [checkingIn, setCheckingIn] = useState<Set<string>>(new Set());
   const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
   const [externalRef, setExternalRef] = useState('');
@@ -163,19 +163,24 @@ export function CartPage() {
               {checkoutLines.map((line) => {
                 const alreadyIn = !!line.checked_in_at;
                 const isChecking = checkingIn.has(line.id);
+                const screening = line.screenings;
                 return (
-                  <div key={line.id} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2">
+                  <div key={line.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 border ${alreadyIn ? 'bg-emerald-950/40 border-emerald-800' : 'bg-slate-900 border-slate-700'}`}>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{line.label}</div>
-                      {line.patron_name && (
-                        <div className="text-xs text-slate-400">{line.patron_name}</div>
+                      {screening && (
+                        <div className="text-xs text-slate-400 mb-0.5">
+                          {screening.title} · {fmtWhen(screening.starts_at)}
+                        </div>
                       )}
-                      {line.qty > 1 && (
-                        <div className="text-xs text-slate-500">×{line.qty}</div>
+                      <div className="font-semibold text-sm leading-tight">
+                        {line.label}{line.qty > 1 ? ` ×${line.qty}` : ''}
+                      </div>
+                      {line.patron_name && (
+                        <div className="text-xs text-slate-400 mt-0.5">{line.patron_name}</div>
                       )}
                     </div>
                     {alreadyIn ? (
-                      <div className="text-emerald-400 text-xs font-semibold whitespace-nowrap">✓ Checked in</div>
+                      <div className="text-emerald-400 text-sm font-semibold whitespace-nowrap shrink-0">✓ In</div>
                     ) : (
                       <button
                         disabled={isChecking}
@@ -191,9 +196,9 @@ export function CartPage() {
                             setCheckingIn((prev) => { const s = new Set(prev); s.delete(line.id); return s; });
                           }
                         }}
-                        className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                        className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg whitespace-nowrap shrink-0"
                       >
-                        {isChecking ? '…' : 'Check In ✓'}
+                        {isChecking ? '…' : `Check In${line.qty > 1 ? ` ×${line.qty}` : ' ✓'}`}
                       </button>
                     )}
                   </div>

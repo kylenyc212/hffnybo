@@ -79,15 +79,19 @@ export async function getUpcomingForCheckin(limit = 2) {
   return (data ?? []) as Array<{ id: string; title: string; starts_at: string; capacity: number; online_sold: number }>;
 }
 
-/** Load order_lines for a completed order (for post-checkout check-in). */
-export async function getCheckinLinesForOrder(orderId: string): Promise<OrderLineRow[]> {
+export interface OrderLineWithScreening extends OrderLineRow {
+  screenings: { title: string; starts_at: string } | null;
+}
+
+/** Load order_lines for a completed order (for post-checkout check-in), with screening name/time. */
+export async function getCheckinLinesForOrder(orderId: string): Promise<OrderLineWithScreening[]> {
   const { data, error } = await supabase
     .from('order_lines')
-    .select('*')
+    .select('*, screenings(title, starts_at)')
     .eq('order_id', orderId)
     .order('id');
   if (error) throw error;
-  return (data ?? []) as OrderLineRow[];
+  return (data ?? []) as OrderLineWithScreening[];
 }
 
 /** Look up the BO screening that maps to a given Wix event ID. */
