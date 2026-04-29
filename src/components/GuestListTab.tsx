@@ -60,11 +60,8 @@ export function GuestListTab() {
       const res  = await fetch(`/api/wix-guests?eventId=${encodeURIComponent(eventId)}`);
       const data = await res.json() as { guests?: GuestRecord[]; error?: string; total?: number };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      // Sort by last name, then first name
-      const sorted = (data.guests ?? []).sort((a, b) => {
-        const ln = a.lastName.localeCompare(b.lastName);
-        return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName);
-      });
+      // API already sorts: unchecked first, then alpha by last name
+      const sorted = data.guests ?? [];
       setGuests(sorted);
       setFetchedAt(new Date().toISOString());
     } catch (e: unknown) {
@@ -154,12 +151,18 @@ export function GuestListTab() {
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm"
           >
             <option value="">— Pick a Wix event —</option>
-            {events.map((ev) => (
-              <option key={ev.id} value={ev.id}>
-                {ev.title}
-                {ev.startDate ? ` · ${fmtTime(ev.startDate)}` : ''}
-              </option>
-            ))}
+            {events.map((ev) => {
+              const prefix = ev.startDate
+                ? new Date(ev.startDate).toLocaleDateString('en-US', {
+                    timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric',
+                  }) + ' ' + fmtTime(ev.startDate) + ' — '
+                : '';
+              return (
+                <option key={ev.id} value={ev.id}>
+                  {prefix}{ev.title}
+                </option>
+              );
+            })}
           </select>
         )}
       </div>
