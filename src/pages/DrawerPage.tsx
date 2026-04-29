@@ -16,6 +16,8 @@ import type { CashCountRow, CashDrawerRow, DenomBreakdown } from '../lib/databas
 import { DenomCounter, totalFromDenoms } from '../components/DenomCounter';
 import { VoidModal } from '../components/VoidModal';
 import { HardDeleteModal } from '../components/HardDeleteModal';
+import { getCheckinLinesForOrder, deleteOrderLine, type OrderLineWithScreening } from '../lib/checkins';
+import { fmtTime } from '../lib/datetime';
 
 type ActionTarget =
   | { mode: 'order'; id: string; amountCents: number; description?: string }
@@ -248,6 +250,31 @@ function OpenDrawerView({
   const [testNotes, setTestNotes] = useState('');
   const [testBusy, setTestBusy] = useState(false);
   const [testErr, setTestErr] = useState<string | null>(null);
+
+  // Expandable order lines inside each sale row
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [expandedLines, setExpandedLines] = useState<OrderLineWithScreening[]>([]);
+  const [linesLoading, setLinesLoading] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  async function toggleOrderExpand(orderId: string) {
+    if (expandedOrderId === orderId) {
+      setExpandedOrderId(null);
+      setExpandedLines([]);
+      setDeleteConfirmId(null);
+      return;
+    }
+    setExpandedOrderId(orderId);
+    setExpandedLines([]);
+    setDeleteConfirmId(null);
+    setLinesLoading(true);
+    try {
+      const lines = await getCheckinLinesForOrder(orderId);
+      setExpandedLines(lines);
+    } catch { /* ignore */ } finally {
+      setLinesLoading(false);
+    }
+  }
 
   // Sales events: count + sum, excluding voided (offsetting adjustment handles math).
   const salesEvents = events.filter((e) => e.kind === 'sale' && !e.order_voided);
@@ -498,112 +525,193 @@ function OpenDrawerView({
               const canVoidCashEvent =
                 e.kind !== 'sale' && e.kind !== 'open' && e.kind !== 'close' && !cashEventVoided;
               const canVoidSale = e.kind === 'sale' && !saleVoided && !!e.order_id;
-              // Super-admin can hard-delete anything except open/close anchors.
-              const canDelete =
-                isSuperAdmin && e.kind !== 'open' && e.kind !== 'close';
+              const canDelete = isSuperAdmin && e.kind !== 'open' && e.kind !== 'close';
+              const canExpand = e.kind === 'sale' && !!e.order_id;
+              const isExpanded = expandedOrderId === e.order_id;
               const timeLabel = new Date(e.created_at).toLocaleTimeString('en-US', {
                 timeZone: 'America/New_York'
               });
               return (
-                <li key={e.id} className="py-2 flex items-center justify-between gap-3 flex-wrap">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm">
-                      <span
-                        className={
-                          isVoided
-                            ? 'text-slate-500 line-through'
-                            : e.kind === 'sale'
-                              ? 'text-emerald-400'
-                              : e.kind === 'removal'
-                                ? 'text-amber-400'
-                                : e.kind === 'add'
-                                  ? 'text-cyan-400'
-                                  : e.kind === 'open'
-                                    ? 'text-slate-300'
-                                    : e.kind === 'close'
-                                      ? 'text-red-400'
-                                      : e.kind === 'adjustment'
-                                        ? 'text-rose-400'
-                                        : 'text-slate-400'
-                        }
-                      >
-                        {e.kind}
-                        {isVoided ? ' (voided)' : ''}
-                      </span>
-                      {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+                <li key={e.id} className="py-2">
+                  {/* Main row */}
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm">
+                        <span
+                          className={
+                            isVoided
+                              ? 'text-slate-500 line-through'
+                              : e.kind === 'sale'
+                                ? 'text-emerald-400'
+                                : e.kind === 'removal'
+                                  ? 'text-amber-400'
+                                  : e.kind === 'add'
+                                    ? 'text-cyan-400'
+                                    : e.kind === 'open'
+                                      ? 'text-slate-300'
+                                      : e.kind === 'close'
+                                        ? 'text-red-400'
+                                        : e.kind === 'adjustment'
+                                          ? 'text-rose-400'
+                                          : 'text-slate-400'
+                          }
+                        >
+                          {e.kind}
+                          {isVoided ? ' (voided)' : ''}
+                        </span>
+                        {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {timeLabel} · {e.who}
+                        {e.order_device && <> · {e.order_device}</>}
+                        {cashEventVoided && e.voided_by && (
+                          <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500">
-                      {timeLabel} · {e.who}
-                      {e.order_device && <> · {e.order_device}</>}
-                      {cashEventVoided && e.voided_by && (
-                        <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
+                    <div
+                      className={`tabular-nums font-semibold ${
+                        isVoided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''
+                      }`}
+                    >
+                      {e.amount_cents < 0 ? '' : '+'}{money(e.amount_cents)}
+                    </div>
+                    <div className="flex gap-1 flex-wrap">
+                      {canExpand && (
+                        <button
+                          onClick={() => toggleOrderExpand(e.order_id!)}
+                          className={`text-xs px-2 py-1 rounded ${
+                            isExpanded
+                              ? 'bg-slate-600 text-white'
+                              : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                          }`}
+                        >
+                          {isExpanded ? '▾ Tickets' : '▸ Tickets'}
+                        </button>
+                      )}
+                      {canVoidSale && (
+                        <button
+                          onClick={() =>
+                            onVoidRequest({
+                              mode: 'order',
+                              id: e.order_id!,
+                              amountCents: e.amount_cents,
+                              description: `Sale · ${e.who} · ${timeLabel}`
+                            })
+                          }
+                          className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                        >
+                          Void
+                        </button>
+                      )}
+                      {canVoidCashEvent && (
+                        <button
+                          onClick={() =>
+                            onVoidRequest({
+                              mode: 'cash_event',
+                              id: e.id,
+                              amountCents: e.amount_cents,
+                              description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
+                            })
+                          }
+                          className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                        >
+                          Void
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() =>
+                            onDeleteRequest(
+                              e.kind === 'sale' && e.order_id
+                                ? {
+                                    mode: 'order',
+                                    id: e.order_id,
+                                    amountCents: e.amount_cents,
+                                    description: `Sale · ${e.who} · ${timeLabel}`
+                                  }
+                                : {
+                                    mode: 'cash_event',
+                                    id: e.id,
+                                    amountCents: e.amount_cents,
+                                    description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
+                                  }
+                            )
+                          }
+                          className="text-xs bg-slate-800 hover:bg-red-900 text-red-300 hover:text-white px-2 py-1 rounded border border-red-900/50"
+                        >
+                          ✕ Delete
+                        </button>
                       )}
                     </div>
                   </div>
-                  <div
-                    className={`tabular-nums font-semibold ${
-                      isVoided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''
-                    }`}
-                  >
-                    {e.amount_cents < 0 ? '' : '+'}{money(e.amount_cents)}
-                  </div>
-                  <div className="flex gap-1">
-                    {canVoidSale && (
-                      <button
-                        onClick={() =>
-                          onVoidRequest({
-                            mode: 'order',
-                            id: e.order_id!,
-                            amountCents: e.amount_cents,
-                            description: `Sale · ${e.who} · ${timeLabel}`
-                          })
-                        }
-                        className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
-                      >
-                        Void
-                      </button>
-                    )}
-                    {canVoidCashEvent && (
-                      <button
-                        onClick={() =>
-                          onVoidRequest({
-                            mode: 'cash_event',
-                            id: e.id,
-                            amountCents: e.amount_cents,
-                            description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
-                          })
-                        }
-                        className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
-                      >
-                        Void
-                      </button>
-                    )}
-                    {canDelete && (
-                      <button
-                        onClick={() =>
-                          onDeleteRequest(
-                            e.kind === 'sale' && e.order_id
-                              ? {
-                                  mode: 'order',
-                                  id: e.order_id,
-                                  amountCents: e.amount_cents,
-                                  description: `Sale · ${e.who} · ${timeLabel}`
-                                }
-                              : {
-                                  mode: 'cash_event',
-                                  id: e.id,
-                                  amountCents: e.amount_cents,
-                                  description: `${e.kind} · ${e.who} · ${timeLabel}${e.reason ? ` — ${e.reason}` : ''}`
-                                }
-                          )
-                        }
-                        className="text-xs bg-slate-800 hover:bg-red-900 text-red-300 hover:text-white px-2 py-1 rounded border border-red-900/50"
-                        title="Hard delete (super admin only)"
-                      >
-                        ✕ Delete
-                      </button>
-                    )}
-                  </div>
+
+                  {/* Expanded ticket lines */}
+                  {canExpand && isExpanded && (
+                    <div className="mt-2 ml-1 border-l-2 border-slate-700 pl-3 space-y-2">
+                      {linesLoading ? (
+                        <div className="text-xs text-slate-500 py-1">Loading tickets…</div>
+                      ) : expandedLines.length === 0 ? (
+                        <div className="text-xs text-slate-500 py-1">No ticket lines found.</div>
+                      ) : (
+                        expandedLines.map((line) => (
+                          <div key={line.id} className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              {line.screenings && (
+                                <div className="text-xs text-slate-500">
+                                  {line.screenings.title} · {fmtTime(line.screenings.starts_at)}
+                                </div>
+                              )}
+                              <div className="text-sm text-slate-200">
+                                {line.label}{line.qty > 1 ? ` ×${line.qty}` : ''}
+                                {line.checked_in_at && (
+                                  <span className="ml-1.5 text-emerald-400 text-xs">✓ checked in</span>
+                                )}
+                              </div>
+                              {line.patron_name && (
+                                <div className="text-xs text-slate-400">{line.patron_name}</div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs text-slate-400 tabular-nums">
+                                {money(line.qty * line.unit_price_cents)}
+                              </span>
+                              {isSuperAdmin && (
+                                deleteConfirmId === line.id ? (
+                                  <div className="flex gap-1">
+                                    <button
+                                      onClick={async () => {
+                                        await deleteOrderLine(line.id);
+                                        setExpandedLines((prev) => prev.filter((l) => l.id !== line.id));
+                                        setDeleteConfirmId(null);
+                                        onRefresh();
+                                      }}
+                                      className="text-xs bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      onClick={() => setDeleteConfirmId(null)}
+                                      className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setDeleteConfirmId(line.id)}
+                                    className="text-xs text-red-400 hover:text-white bg-red-900/30 hover:bg-red-800 px-2 py-1 rounded"
+                                  >
+                                    Delete
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </li>
               );
             })}

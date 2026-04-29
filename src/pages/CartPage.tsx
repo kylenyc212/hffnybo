@@ -9,7 +9,7 @@ import { checkout } from '../lib/checkout';
 import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
-import { getCheckinLinesForOrder, checkInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
+import { getCheckinLinesForOrder, checkInOrderLine, uncheckInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -180,7 +180,23 @@ export function CartPage() {
                       )}
                     </div>
                     {alreadyIn ? (
-                      <div className="text-emerald-400 text-sm font-semibold whitespace-nowrap shrink-0">✓ In</div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-emerald-400 text-sm font-semibold">✓ In</span>
+                        <button
+                          onClick={async () => {
+                            if (!user) return;
+                            try {
+                              await uncheckInOrderLine(line.id);
+                              setCheckoutLines((prev) =>
+                                prev ? prev.map((l) => l.id === line.id ? { ...l, checked_in_at: null, checked_in_by: null } : l) : prev
+                              );
+                            } catch { /* ignore */ }
+                          }}
+                          className="text-xs text-slate-500 hover:text-amber-400 underline-offset-2 hover:underline"
+                        >
+                          Undo
+                        </button>
+                      </div>
                     ) : (
                       <button
                         disabled={isChecking}

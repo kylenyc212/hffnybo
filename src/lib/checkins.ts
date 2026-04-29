@@ -10,6 +10,24 @@ export async function checkInOrderLine(lineId: string, checkedInBy: string): Pro
   if (error) throw error;
 }
 
+/** Clear check-in status on an order_line (undo a mistaken check-in). */
+export async function uncheckInOrderLine(lineId: string): Promise<void> {
+  const { error } = await supabase
+    .from('order_lines')
+    .update({ checked_in_at: null, checked_in_by: null })
+    .eq('id', lineId);
+  if (error) throw error;
+}
+
+/** Hard-delete a single order_line (super-admin correction for wrong ticket type etc). */
+export async function deleteOrderLine(lineId: string): Promise<void> {
+  const { error } = await supabase
+    .from('order_lines')
+    .delete()
+    .eq('id', lineId);
+  if (error) throw error;
+}
+
 /** Record (or refresh) a Wix scan check-in. Upserts on ticket_number so re-scans are idempotent. */
 export async function recordWixCheckin(p: {
   ticketNumber: string;
