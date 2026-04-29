@@ -5,6 +5,7 @@ import {
   loadCheckinCounts,
   getUpcomingForCheckin,
   recordWixCheckin,
+  recordManualCheckin,
   lookupScreeningByWixId,
 } from '../lib/checkins';
 import { fmtTime } from '../lib/datetime';
@@ -240,7 +241,7 @@ export function CheckInPage() {
     <div className="p-4 sm:p-6 max-w-lg mx-auto">
       <h1 className="text-2xl font-bold mb-3">Door Check-In</h1>
 
-      {/* ── Upcoming screenings + counts ── */}
+      {/* ── Upcoming screenings + counts + manual +1 ── */}
       {upcoming.length > 0 && (
         <div className="grid grid-cols-2 gap-2 mb-4">
           {upcoming.map((s) => {
@@ -249,7 +250,24 @@ export function CheckInPage() {
               <div key={s.id} className="bg-slate-800 border border-slate-700 rounded-xl p-3">
                 <div className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 mb-1">{s.title}</div>
                 <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
-                <div className="text-orange-400 font-bold text-sm mt-1">{count} ✓ in</div>
+                <div className="flex items-center justify-between mt-2 gap-1">
+                  <span className="text-orange-400 font-bold text-sm">{count} ✓ in</span>
+                  <button
+                    onClick={async () => {
+                      if (!user) return;
+                      // optimistic update
+                      setCheckinCounts((prev) => {
+                        const next = new Map(prev);
+                        next.set(s.id, (next.get(s.id) ?? 0) + 1);
+                        return next;
+                      });
+                      await recordManualCheckin(s.id, user.name).catch(() => {});
+                    }}
+                    className="bg-orange-700 hover:bg-orange-600 text-white font-bold text-sm px-3 py-1 rounded-lg"
+                  >
+                    +1
+                  </button>
+                </div>
               </div>
             );
           })}

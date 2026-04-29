@@ -36,11 +36,20 @@ export async function recordWixCheckin(p: {
   if (error) throw error;
 }
 
-/** Combined check-in counts (in-person + Wix) per screening_id. */
+/** Record a manual +1 check-in tap (no ticket — just head count). */
+export async function recordManualCheckin(screeningId: string, checkedInBy: string): Promise<void> {
+  const { error } = await supabase
+    .from('manual_checkins')
+    .insert({ screening_id: screeningId, checked_in_by: checkedInBy, qty: 1 });
+  if (error) throw error;
+}
+
+/** Combined check-in counts (in-person + Wix + manual taps) per screening_id. */
 export async function loadCheckinCounts(): Promise<Map<string, number>> {
-  const [ipRes, wixRes] = await Promise.all([
+  const [ipRes, wixRes, manualRes] = await Promise.all([
     supabase.from('order_lines').select('screening_id, qty').not('checked_in_at', 'is', null),
     supabase.from('wix_checkins').select('screening_id').not('screening_id', 'is', null),
+    supabase.from('manual_checkins').select('screening_id, qty'),
   ]);
 
   const counts = new Map<string, number>();
@@ -49,6 +58,9 @@ export async function loadCheckinCounts(): Promise<Map<string, number>> {
   }
   for (const r of (wixRes.data ?? []) as { screening_id: string }[]) {
     counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + 1);
+  }
+  for (const r of (manualRes.data ?? []) as { screening_id: string; qty: number }[]) {
+    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + r.qty);
   }
   return counts;
 }

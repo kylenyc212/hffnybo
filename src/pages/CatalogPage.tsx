@@ -43,6 +43,13 @@ export function CatalogPage() {
     );
   };
 
+  // Optimistic check-in bump so the orange count updates immediately on +1 tap.
+  const bumpCheckin = (screeningId: string) => {
+    setScreenings((prev) =>
+      prev.map((s) => (s.id === screeningId ? { ...s, checkin_count: s.checkin_count + 1 } : s))
+    );
+  };
+
   // Passes + merch (always-available) render at the top regardless of date.
   const alwaysAvailable = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -122,7 +129,7 @@ export function CatalogPage() {
         <section className="mb-6">
           <div className="space-y-3">
             {alwaysAvailable.map((s) => (
-              <ScreeningCard key={s.id} screening={s} onSold={bumpSold} />
+              <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
             ))}
           </div>
         </section>
@@ -139,7 +146,7 @@ export function CatalogPage() {
               </h2>
               <div className="space-y-3">
                 {list.map((s) => (
-                  <ScreeningCard key={s.id} screening={s} onSold={bumpSold} />
+                  <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
                 ))}
               </div>
             </section>

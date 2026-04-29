@@ -1,18 +1,22 @@
 import { useState } from 'react';
 import { useCart } from '../lib/cart';
+import { useSession } from '../lib/session';
 import { money, toCents } from '../lib/money';
 import { fmtTime } from '../lib/datetime';
 import type { ScreeningWithSold } from '../lib/queries';
 import type { TicketTypeRow } from '../lib/database.types';
 import { PassScanner } from './PassScanner';
+import { recordManualCheckin } from '../lib/checkins';
 
 interface Props {
   screening: ScreeningWithSold;
   onSold: (screeningId: string, qty: number) => void;
+  onCheckedIn?: (screeningId: string) => void;
 }
 
-export function ScreeningCard({ screening, onSold }: Props) {
+export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
   const addLine = useCart((s) => s.addLine);
+  const { user } = useSession();
   const [scanOpen, setScanOpen] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
   const [otherLabel, setOtherLabel] = useState('');
@@ -95,9 +99,18 @@ export function ScreeningCard({ screening, onSold }: Props) {
           <div className="text-right text-xs shrink-0">
             <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>{remaining} left</div>
             <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>{totalSold}/{screening.capacity}</div>
-            {screening.checkin_count > 0 && (
-              <div className="text-orange-400">{screening.checkin_count} ✓ in</div>
-            )}
+            <div className="flex items-center justify-end gap-1 mt-0.5">
+              <span className="text-orange-400">{screening.checkin_count} ✓</span>
+              <button
+                onClick={async () => {
+                  if (!user) return;
+                  onCheckedIn?.(screening.id);
+                  await recordManualCheckin(screening.id, user.name).catch(() => {});
+                }}
+                className="text-orange-400 hover:text-orange-300 bg-orange-900/40 hover:bg-orange-900/70 rounded px-1 leading-none font-bold"
+                title="Manual check-in +1"
+              >+</button>
+            </div>
           </div>
         )}
       </div>
