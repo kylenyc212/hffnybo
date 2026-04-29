@@ -103,7 +103,7 @@ export function ScreeningCard({ screening, onSold }: Props) {
           Always-available items (passes, merch): just the ticket type buttons.
           Regular screenings: ticket types + "Other" button at the end. */}
       {(paid.length > 0 || !alwaysAvailable) && (
-        <div className={`grid gap-2 mb-2 ${alwaysAvailable ? 'grid-cols-4' : 'grid-cols-2 sm:grid-cols-4'}`}>
+        <div className={`grid gap-2 mb-2 ${alwaysAvailable ? 'grid-cols-4' : 'grid-cols-3 sm:grid-cols-4'}`}>
           {paid.map((t) => (
             <button
               key={t.id}
