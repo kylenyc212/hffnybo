@@ -96,10 +96,11 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
           </div>
         </div>
         {!alwaysAvailable && (
-          <div className="text-right text-xs shrink-0">
-            <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>{remaining} left</div>
-            <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>{totalSold}/{screening.capacity}</div>
-            <div className="flex items-center justify-end gap-1 mt-0.5">
+          <div className="text-right text-xs shrink-0 space-y-1">
+            <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
+              {remaining} left · <span className="font-normal">{totalSold}/{screening.capacity}</span>
+            </div>
+            <div className="flex items-center justify-end gap-1.5">
               <span className="text-orange-400">{screening.checkin_count} ✓</span>
               <button
                 onClick={async () => {
@@ -107,7 +108,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
                   onCheckedIn?.(screening.id);
                   await recordManualCheckin(screening.id, user.name).catch(() => {});
                 }}
-                className="text-orange-400 hover:text-orange-300 bg-orange-900/40 hover:bg-orange-900/70 rounded px-1 leading-none font-bold"
+                className="text-orange-400 hover:text-orange-300 bg-orange-900/40 hover:bg-orange-900/70 rounded px-2 py-1 text-sm font-bold leading-none"
                 title="Manual check-in +1"
               >+</button>
             </div>
