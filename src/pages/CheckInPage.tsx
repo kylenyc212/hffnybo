@@ -9,8 +9,10 @@ import {
   lookupScreeningByWixId,
 } from '../lib/checkins';
 import { fmtTime } from '../lib/datetime';
+import { GuestListTab } from '../components/GuestListTab';
 
 type Phase = 'scan' | 'lookup' | 'review' | 'done';
+type MainTab = 'scan' | 'guestlist';
 
 interface WixTicket {
   ticketNumber?: string;
@@ -55,6 +57,9 @@ function detectCheckedIn(t: WixTicket): boolean {
 
 export function CheckInPage() {
   const { user } = useSession();
+
+  // ── Main tab ──
+  const [mainTab, setMainTab] = useState<MainTab>('scan');
 
   // ── Upcoming screenings ──
   const [upcoming, setUpcoming] = useState<UpcomingScreening[]>([]);
@@ -247,6 +252,30 @@ export function CheckInPage() {
     <div className="p-4 sm:p-6 max-w-lg mx-auto">
       <h1 className="text-2xl font-bold mb-3">Door Check-In</h1>
 
+      {/* ── Tab bar: QR Scan | Guest List ── */}
+      <div className="flex gap-1 mb-4 bg-slate-800 border border-slate-700 rounded-xl p-1">
+        {(['scan', 'guestlist'] as MainTab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setMainTab(t)}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              mainTab === t
+                ? 'bg-brand text-white'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {t === 'scan' ? '⊡ QR Scan' : '☰ Guest List'}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Guest List tab ── */}
+      {mainTab === 'guestlist' && <GuestListTab />}
+
+      {/* ── Scan tab content (hidden when guest list is active) ── */}
+      {mainTab === 'scan' && (
+      <>
+
       {/* ── Upcoming screenings + counts + manual +1 ── */}
       {upcoming.length > 0 && (
         <div className="grid grid-cols-2 gap-2 mb-4">
@@ -416,6 +445,9 @@ export function CheckInPage() {
             Scan next ticket
           </button>
         </div>
+      )}
+
+      </> /* end scan tab */
       )}
     </div>
   );
