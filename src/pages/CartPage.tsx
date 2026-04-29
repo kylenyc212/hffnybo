@@ -6,9 +6,10 @@ import { money, toCents } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { getOpenDrawer } from '../lib/drawer';
 import { checkout } from '../lib/checkout';
-import type { CashDrawerRow } from '../lib/database.types';
+import type { CashDrawerRow, OrderLineRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
+import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -25,7 +26,9 @@ export function CartPage() {
   const [tenderStr, setTenderStr] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean } | null>(null);
+  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string } | null>(null);
+  const [checkoutLines, setCheckoutLines] = useState<OrderLineRow[] | null>(null);
+  const [checkingIn, setCheckingIn] = useState<Set<string>>(new Set());
   const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
   const [externalRef, setExternalRef] = useState('');
 
@@ -108,8 +111,15 @@ export function CartPage() {
         changeCents: result.changeCents,
         subtotalCents: result.subtotalCents,
         synced: result.synced,
-        external: isExternal
+        external: isExternal,
+        orderId: result.orderId,
       });
+      // Load order_lines for post-checkout check-in (only works when synced)
+      if (result.synced) {
+        getCheckinLinesForOrder(result.orderId)
+          .then(setCheckoutLines)
+          .catch(() => {});
+      }
       clear();
       setTenderStr('');
       setExternalRef('');
@@ -145,9 +155,59 @@ export function CartPage() {
             </div>
           )}
         </div>
+        {/* Check-in at door */}
+        {checkoutLines && checkoutLines.length > 0 && (
+          <div className="mt-4 bg-slate-800 border border-slate-700 rounded-xl p-4">
+            <div className="text-sm font-semibold mb-3 text-slate-200">Check in at door</div>
+            <div className="space-y-2">
+              {checkoutLines.map((line) => {
+                const alreadyIn = !!line.checked_in_at;
+                const isChecking = checkingIn.has(line.id);
+                return (
+                  <div key={line.id} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium">{line.label}</div>
+                      {line.patron_name && (
+                        <div className="text-xs text-slate-400">{line.patron_name}</div>
+                      )}
+                      {line.qty > 1 && (
+                        <div className="text-xs text-slate-500">×{line.qty}</div>
+                      )}
+                    </div>
+                    {alreadyIn ? (
+                      <div className="text-emerald-400 text-xs font-semibold whitespace-nowrap">✓ Checked in</div>
+                    ) : (
+                      <button
+                        disabled={isChecking}
+                        onClick={async () => {
+                          if (!user) return;
+                          setCheckingIn((prev) => new Set(prev).add(line.id));
+                          try {
+                            await checkInOrderLine(line.id, user.name);
+                            setCheckoutLines((prev) =>
+                              prev ? prev.map((l) => l.id === line.id ? { ...l, checked_in_at: new Date().toISOString(), checked_in_by: user.name } : l) : prev
+                            );
+                          } catch { /* ignore */ } finally {
+                            setCheckingIn((prev) => { const s = new Set(prev); s.delete(line.id); return s; });
+                          }
+                        }}
+                        className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                      >
+                        {isChecking ? '…' : 'Check In ✓'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {!lastSale?.synced && (
+          <div className="mt-3 text-xs text-slate-500 text-center">Door check-in available once back online.</div>
+        )}
         <div className="mt-6 flex gap-3">
           <button
-            onClick={() => { setLastSale(null); nav('/catalog'); }}
+            onClick={() => { setLastSale(null); setCheckoutLines(null); setCheckingIn(new Set()); nav('/catalog'); }}
             className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl"
           >
             New sale

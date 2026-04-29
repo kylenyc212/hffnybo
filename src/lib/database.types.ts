@@ -110,6 +110,19 @@ export interface OrderLineRow {
   comp_category: CompCategory | null;
   passholder_id: string | null;
   patron_name: string | null;
+  checked_in_at: string | null;
+  checked_in_by: string | null;
+}
+
+export interface WixCheckinRow {
+  id: string;
+  ticket_number: string;
+  wix_event_id: string;
+  screening_id: string | null;
+  checked_in_at: string;
+  checked_in_by: string;
+  guest_name: string | null;
+  ticket_type: string | null;
 }
 
 export type DenomBreakdown = Record<string, number>; // key = cent value, value = count
@@ -151,6 +164,7 @@ export interface Database {
       users: { Row: UserRow; Insert: { name: string; pin_hash: string; role: UserRole }; Update: Partial<UserRow> };
       orders: { Row: OrderRow; Insert: Partial<OrderRow> & { cashier_name: string; device_label: string; subtotal_cents: number }; Update: Partial<OrderRow> };
       order_lines: { Row: OrderLineRow; Insert: Omit<OrderLineRow, 'id'>; Update: Partial<OrderLineRow> };
+      wix_checkins: { Row: WixCheckinRow; Insert: Omit<WixCheckinRow, 'id' | 'checked_in_at'> & { checked_in_at?: string }; Update: Partial<WixCheckinRow> };
       cash_drawers: { Row: CashDrawerRow; Insert: Partial<CashDrawerRow> & { device_label: string; shift_date: string; opened_by: string; opening_cents: number }; Update: Partial<CashDrawerRow> };
       cash_events: { Row: CashEventRow; Insert: Omit<CashEventRow, 'id' | 'created_at'> & { created_at?: string }; Update: Partial<CashEventRow> };
       cash_counts: { Row: CashCountRow; Insert: Omit<CashCountRow, 'id' | 'created_at'> & { created_at?: string }; Update: Partial<CashCountRow> };

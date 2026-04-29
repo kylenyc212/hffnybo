@@ -92,9 +92,12 @@ export function ScreeningCard({ screening, onSold }: Props) {
           </div>
         </div>
         {!alwaysAvailable && (
-          <div className={`text-right text-xs shrink-0 ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>
-            <div className="font-semibold">{remaining} left</div>
-            <div>{totalSold}/{screening.capacity}</div>
+          <div className="text-right text-xs shrink-0">
+            <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>{remaining} left</div>
+            <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>{totalSold}/{screening.capacity}</div>
+            {screening.checkin_count > 0 && (
+              <div className="text-orange-400">{screening.checkin_count} ✓ in</div>
+            )}
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import { cachedFetch, CacheKeys } from './cache';
 
 export interface ScreeningWithSold extends ScreeningRow {
   sold_in_person: number;
+  checkin_count: number;
   ticket_types: TicketTypeRow[];
 }
 
@@ -44,12 +45,31 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     soldByScreening.set(l.screening_id, (soldByScreening.get(l.screening_id) ?? 0) + (l.qty ?? 0));
   }
 
+  // Check-in counts (in-person + Wix) per screening
+  const { data: checkedInLines } = await supabase
+    .from('order_lines')
+    .select('screening_id, qty')
+    .not('checked_in_at', 'is', null);
+  const { data: wixCheckins } = await supabase
+    .from('wix_checkins')
+    .select('screening_id')
+    .not('screening_id', 'is', null);
+
+  const checkinByScreening = new Map<string, number>();
+  for (const r of ((checkedInLines ?? []) as { screening_id: string; qty: number }[])) {
+    checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + r.qty);
+  }
+  for (const r of ((wixCheckins ?? []) as { screening_id: string }[])) {
+    checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + 1);
+  }
+
   const typeRows = (types ?? []) as TicketTypeRow[];
   const screeningRows = (screenings ?? []) as ScreeningRow[];
 
   return screeningRows.map((s) => ({
     ...s,
     sold_in_person: soldByScreening.get(s.id) ?? 0,
+    checkin_count: checkinByScreening.get(s.id) ?? 0,
     ticket_types: typeRows.filter((t) => t.screening_id === s.id)
   }));
   });

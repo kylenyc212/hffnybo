@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { useSession } from '../lib/session';
+import {
+  loadCheckinCounts,
+  getUpcomingForCheckin,
+  recordWixCheckin,
+  lookupScreeningByWixId,
+} from '../lib/checkins';
+import { fmtTime } from '../lib/datetime';
 
 type Phase = 'scan' | 'lookup' | 'review' | 'done';
 
@@ -8,7 +15,6 @@ interface WixTicket {
   ticketNumber?: string;
   guestFullName?: string;
   orderFullName?: string;
-  // guestDetails sub-object returned by List Tickets with GUEST_DETAILS fieldset
   guestDetails?: { firstName?: string; lastName?: string; email?: string } | null;
   name?: string;
   checkIn?: { created?: string } | null;
@@ -21,9 +27,14 @@ interface WixTicket {
   [key: string]: unknown;
 }
 
-/** Parse a Wix ticket QR code URL or bare ticket number.
- *  QR format: https://www.wixevents.com/check-in/{ticketNumber},{eventId}
- *  Returns { ticketNumber, eventId } — eventId may be empty string. */
+interface UpcomingScreening {
+  id: string;
+  title: string;
+  starts_at: string;
+  capacity: number;
+  online_sold: number;
+}
+
 function parseQr(raw: string): { ticketNumber: string; eventId: string } | null {
   const trimmed = raw.trim();
   try {
@@ -34,7 +45,6 @@ function parseQr(raw: string): { ticketNumber: string; eventId: string } | null 
   return trimmed ? { ticketNumber: trimmed, eventId: '' } : null;
 }
 
-/** Detect "already checked in" across possible Wix field shapes */
 function detectCheckedIn(t: WixTicket): boolean {
   if (t.checkedIn === true) return true;
   if (t.status === 'CHECKED_IN') return true;
@@ -44,22 +54,41 @@ function detectCheckedIn(t: WixTicket): boolean {
 
 export function CheckInPage() {
   const { user } = useSession();
-  const [phase, setPhase]     = useState<Phase>('scan');
-  const [scanKey, setScanKey] = useState(0);   // increment to force video remount
-  const [ticket, setTicket]   = useState<WixTicket | null>(null);
+
+  // ── Upcoming screenings ──
+  const [upcoming, setUpcoming] = useState<UpcomingScreening[]>([]);
+  const [checkinCounts, setCheckinCounts] = useState<Map<string, number>>(new Map());
+
+  // ── Scanner state ──
+  const [phase, setPhase] = useState<Phase>('scan');
+  const [scanKey, setScanKey] = useState(0);
+  const [ticket, setTicket] = useState<WixTicket | null>(null);
   const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [ticketNum, setTicketNum] = useState('');
-  const [eventId, setEventId]   = useState('');   // from QR — required by Wix check-in POST
-  const [err, setErr]         = useState<string | null>(null);
-  const [manual, setManual]   = useState('');
-  const [busy, setBusy]       = useState(false);
+  const [eventId, setEventId] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [manual, setManual] = useState('');
+  const [busy, setBusy] = useState(false);
   const [camStatus, setCamStatus] = useState('Starting camera…');
+  const [scanScreening, setScanScreening] = useState<{ id: string; title: string; starts_at: string } | null>(null);
+
   const videoRef    = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
 
-  // Start camera — re-runs whenever scanKey or phase changes.
-  // scanKey is incremented on reset so the video element remounts fresh.
+  async function refreshCounts() {
+    try {
+      const [screens, counts] = await Promise.all([
+        getUpcomingForCheckin(2),
+        loadCheckinCounts(),
+      ]);
+      setUpcoming(screens);
+      setCheckinCounts(counts);
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { refreshCounts(); }, []);
+
   useEffect(() => {
     if (phase !== 'scan') return;
     const reader = new BrowserMultiFormatReader();
@@ -68,22 +97,14 @@ export function CheckInPage() {
     (async () => {
       try {
         const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-        if (devices.length === 0) {
-          setCamStatus('No camera found — use manual entry below.');
-          return;
-        }
+        if (devices.length === 0) { setCamStatus('No camera found — use manual entry below.'); return; }
         if (cancelled || !videoRef.current) return;
-        const back =
-          devices.find((d) => /back|rear|environment/i.test(d.label)) ?? devices[0];
-        const controls = await reader.decodeFromVideoDevice(
-          back.deviceId,
-          videoRef.current,
-          (result) => {
-            if (!result || cancelled) return;
-            controls.stop();
-            handleCode(result.getText());
-          }
-        );
+        const back = devices.find((d) => /back|rear|environment/i.test(d.label)) ?? devices[0];
+        const controls = await reader.decodeFromVideoDevice(back.deviceId, videoRef.current, (result) => {
+          if (!result || cancelled) return;
+          controls.stop();
+          handleCode(result.getText());
+        });
         controlsRef.current = controls;
         setCamStatus('Point camera at the QR code on the Wix ticket…');
       } catch {
@@ -104,15 +125,23 @@ export function CheckInPage() {
 
     const { ticketNumber: tn, eventId: eid } = parsed;
     setTicketNum(tn);
-    setEventId(eid);   // persist so doCheckIn can include it in the POST
+    setEventId(eid);
     setErr(null);
     setShowRaw(false);
+    setScanScreening(null);
     setPhase('lookup');
     setBusy(true);
 
+    // Look up matching BO screening in parallel with ticket fetch
+    if (eid) {
+      lookupScreeningByWixId(eid)
+        .then((s) => { if (s) setScanScreening(s); })
+        .catch(() => {});
+    }
+
     try {
       const params = new URLSearchParams({ ticket: tn });
-      if (eid) params.set('eventId', eid);  // use local var — setEventId(eid) is async, state not updated yet
+      if (eid) params.set('eventId', eid);
       const res  = await fetch(`/api/wix-checkin?${params}`);
       const data = await res.json() as Record<string, unknown>;
       setRawResponse(data);
@@ -121,7 +150,6 @@ export function CheckInPage() {
         setPhase('scan');
         return;
       }
-      // API normalizes to { ticket: {...} } regardless of which Wix endpoint matched
       const t = (data.ticket ?? data) as WixTicket;
       setTicket({ ...t, ticketNumber: t.ticketNumber ?? tn });
       setPhase('review');
@@ -135,11 +163,10 @@ export function CheckInPage() {
 
   async function doCheckIn() {
     const tn  = ticket?.ticketNumber ?? ticketNum;
-    // Prefer eventId parsed from QR; fall back to eventId returned by lookup API
     const eid = eventId || String(ticket?.eventId ?? '');
     if (!tn) return;
     if (!eid) {
-      setErr('Event ID is missing — scan the full QR code from the ticket (not just the ticket number).');
+      setErr('Event ID is missing — scan the full QR code from the ticket.');
       return;
     }
     setBusy(true);
@@ -155,7 +182,21 @@ export function CheckInPage() {
         setErr(String(data.error ?? 'Check-in failed'));
         return;
       }
+
+      // Record in our DB (best-effort — don't block on failure)
+      if (user) {
+        recordWixCheckin({
+          ticketNumber: tn,
+          wixEventId:   eid,
+          screeningId:  scanScreening?.id ?? null,
+          checkedInBy:  user.name,
+          guestName:    guestName !== '—' ? guestName : null,
+          ticketType:   ticketType !== 'Ticket' ? ticketType : null,
+        }).catch(() => {});
+      }
+
       setPhase('done');
+      refreshCounts();
     } catch {
       setErr('Network error during check-in.');
     } finally {
@@ -165,7 +206,7 @@ export function CheckInPage() {
 
   function reset() {
     setPhase('scan');
-    setScanKey((k) => k + 1); // force video element to remount
+    setScanKey((k) => k + 1);
     setTicket(null);
     setRawResponse(null);
     setShowRaw(false);
@@ -174,6 +215,7 @@ export function CheckInPage() {
     setErr(null);
     setManual('');
     setBusy(false);
+    setScanScreening(null);
     setCamStatus('Starting camera…');
   }
 
@@ -183,7 +225,6 @@ export function CheckInPage() {
     ? [ticket.guestDetails.firstName, ticket.guestDetails.lastName].filter(Boolean).join(' ')
     : null;
   const guestName  = ticket?.guestFullName ?? ticket?.orderFullName ?? guestDetailsName ?? '—';
-  // Ticket type: fall back to order status (FREE / PAID) so it's not blank
   const ticketType = ticket?.name
     ?? (ticket?.orderStatus === 'FREE' ? 'Free / Comp' : ticket?.orderStatus ? String(ticket.orderStatus) : 'Ticket');
   const alreadyIn  = ticket ? detectCheckedIn(ticket) : false;
@@ -197,7 +238,23 @@ export function CheckInPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-lg mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Door Check-In</h1>
+      <h1 className="text-2xl font-bold mb-3">Door Check-In</h1>
+
+      {/* ── Upcoming screenings + counts ── */}
+      {upcoming.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {upcoming.map((s) => {
+            const count = checkinCounts.get(s.id) ?? 0;
+            return (
+              <div key={s.id} className="bg-slate-800 border border-slate-700 rounded-xl p-3">
+                <div className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 mb-1">{s.title}</div>
+                <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
+                <div className="text-orange-400 font-bold text-sm mt-1">{count} ✓ in</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {err && (
         <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-lg mb-4">
@@ -205,18 +262,11 @@ export function CheckInPage() {
         </div>
       )}
 
-      {/* ── Scan phase ───────────────────────────────────── */}
+      {/* ── Scan phase ── */}
       {phase === 'scan' && (
-        // key={scanKey} forces this subtree (and the video element) to fully
-        // remount on every reset, giving ZXing a clean DOM node each time.
         <div key={scanKey} className="space-y-3">
           <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-            <video
-              ref={videoRef}
-              className="w-full aspect-video bg-black"
-              muted
-              playsInline
-            />
+            <video ref={videoRef} className="w-full aspect-video bg-black" muted playsInline />
             <div className="px-4 py-2 text-sm text-slate-400">{camStatus}</div>
           </div>
           <div className="flex gap-2">
@@ -240,7 +290,7 @@ export function CheckInPage() {
         </div>
       )}
 
-      {/* ── Lookup in progress ───────────────────────────── */}
+      {/* ── Lookup in progress ── */}
       {phase === 'lookup' && (
         <div className="text-center py-16 text-slate-400">
           <div className="text-lg mb-2">Looking up ticket…</div>
@@ -248,7 +298,7 @@ export function CheckInPage() {
         </div>
       )}
 
-      {/* ── Review phase ─────────────────────────────────── */}
+      {/* ── Review phase ── */}
       {phase === 'review' && ticket && (
         <div className="space-y-3">
           {isCanceled ? (
@@ -258,9 +308,7 @@ export function CheckInPage() {
           ) : alreadyIn ? (
             <div className="bg-amber-900 border-2 border-amber-500 text-amber-100 font-bold text-center py-4 rounded-2xl">
               <div className="text-lg">⚠️ ALREADY CHECKED IN</div>
-              {checkInTime && (
-                <div className="text-sm font-normal mt-0.5 text-amber-200">at {checkInTime}</div>
-              )}
+              {checkInTime && <div className="text-sm font-normal mt-0.5 text-amber-200">at {checkInTime}</div>}
             </div>
           ) : (
             <div className="bg-emerald-900/60 border-2 border-emerald-600 text-emerald-200 font-bold text-center py-4 rounded-2xl text-lg">
@@ -271,17 +319,18 @@ export function CheckInPage() {
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
             <div className="text-3xl font-bold mb-1 leading-tight">{guestName}</div>
             <div className="text-slate-300 text-lg">{ticketType}</div>
+            {scanScreening && (
+              <div className="text-slate-400 text-sm mt-1">
+                {scanScreening.title} · {fmtTime(scanScreening.starts_at)}
+              </div>
+            )}
             <div className="text-xs text-slate-500 font-mono mt-3">
               {ticket.ticketNumber ?? ticketNum}
-              {eventId && <span className="block text-slate-600">{eventId}</span>}
             </div>
           </div>
 
           <div className="flex gap-2">
-            <button
-              onClick={reset}
-              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl"
-            >
+            <button onClick={reset} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
               ← Back
             </button>
             {!isCanceled && !alreadyIn && (
@@ -294,23 +343,16 @@ export function CheckInPage() {
               </button>
             )}
             {(alreadyIn || isCanceled) && (
-              <button
-                onClick={reset}
-                className="flex-[2] bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl"
-              >
+              <button onClick={reset} className="flex-[2] bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
                 Scan next
               </button>
             )}
           </div>
 
-          {/* Raw Wix response — for debugging field shapes */}
           {rawResponse && (
             <div className="mt-1">
               <div className="flex gap-2 items-center">
-                <button
-                  onClick={() => setShowRaw(!showRaw)}
-                  className="text-xs text-slate-500 hover:text-slate-300"
-                >
+                <button onClick={() => setShowRaw(!showRaw)} className="text-xs text-slate-500 hover:text-slate-300">
                   {showRaw ? '− Hide' : '+ Show'} raw Wix response
                 </button>
                 <button
@@ -332,19 +374,21 @@ export function CheckInPage() {
         </div>
       )}
 
-      {/* ── Done phase ───────────────────────────────────── */}
+      {/* ── Done phase ── */}
       {phase === 'done' && (
         <div className="space-y-4">
           <div className="bg-emerald-900/60 border-2 border-emerald-600 rounded-2xl p-10 text-center">
             <div className="text-6xl mb-4">✓</div>
             <div className="text-3xl font-bold text-emerald-300 leading-tight">{guestName}</div>
             <div className="text-emerald-200 text-lg mt-1">{ticketType}</div>
+            {scanScreening && (
+              <div className="text-emerald-400 text-sm mt-1">
+                {scanScreening.title} · {fmtTime(scanScreening.starts_at)}
+              </div>
+            )}
             <div className="text-emerald-400 mt-3 font-semibold">Checked in!</div>
           </div>
-          <button
-            onClick={reset}
-            className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-xl"
-          >
+          <button onClick={reset} className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-xl">
             Scan next ticket
           </button>
         </div>
