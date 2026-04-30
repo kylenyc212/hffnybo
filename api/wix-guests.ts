@@ -121,9 +121,27 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
           checkedIn: t.guestDetails?.checkedIn ?? checkedIn,
         }));
 
+      const isNamed = !!(firstName || lastName);
       const existing = byOrder.get(orderNum);
-      if (existing) {
-        // Same order, different ticket slot — merge in; keep first name found
+
+      if (!existing) {
+        // First record for this order → becomes the anchor row
+        const record: GuestRecord = { id: orderNum, orderNumber: orderNum, firstName, lastName, email, checkedIn: false, tickets };
+        byOrder.set(orderNum, record);
+        all.push(record);
+      } else if (isNamed && g.guestType === 'GUEST') {
+        // Named additional guest → own searchable row so "Smith" finds Joe & Jane
+        all.push({
+          id: g.id ?? `${orderNum}-${all.length}`,
+          orderNumber: orderNum,
+          firstName,
+          lastName,
+          email: email || existing.email,
+          checkedIn: false,
+          tickets,
+        });
+      } else {
+        // Nameless additional slot → merge tickets into anchor row
         if (!existing.firstName && firstName) existing.firstName = firstName;
         if (!existing.lastName  && lastName)  existing.lastName  = lastName;
         if (!existing.email     && email)      existing.email     = email;
@@ -132,9 +150,6 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
             existing.tickets.push(t);
           }
         }
-      } else {
-        byOrder.set(orderNum, { id: orderNum, orderNumber: orderNum, firstName, lastName, email, checkedIn: false, tickets });
-        all.push(byOrder.get(orderNum)!);
       }
     }
 
