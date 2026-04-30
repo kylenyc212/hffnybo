@@ -103,11 +103,10 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     };
 
     const guests = data.guests ?? [];
-
     for (const g of guests) {
       if (g.additionalDetails?.archived) continue;
 
-      const gd       = g.guestDetails ?? {};
+      const gd        = g.guestDetails ?? {};
       const firstName = (gd.firstName ?? '').trim();
       const lastName  = (gd.lastName  ?? '').trim();
       const email     = (gd.email ?? '').trim();
@@ -117,14 +116,14 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
       const tickets = (g.tickets ?? [])
         .filter((t) => t.number)
         .map((t) => ({
-          number:   t.number!,
-          typeName: t.name ?? 'Ticket',
+          number:    t.number!,
+          typeName:  t.name ?? 'Ticket',
           checkedIn: t.guestDetails?.checkedIn ?? checkedIn,
         }));
 
       const existing = byOrder.get(orderNum);
       if (existing) {
-        // Same order, different ticket slot — merge tickets in; keep first name found
+        // Same order, different ticket slot — merge in; keep first name found
         if (!existing.firstName && firstName) existing.firstName = firstName;
         if (!existing.lastName  && lastName)  existing.lastName  = lastName;
         if (!existing.email     && email)      existing.email     = email;
@@ -134,17 +133,8 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
           }
         }
       } else {
-        const record: GuestRecord = {
-          id: orderNum,
-          orderNumber: orderNum,
-          firstName,
-          lastName,
-          email,
-          checkedIn: false, // computed below
-          tickets,
-        };
-        byOrder.set(orderNum, record);
-        all.push(record);
+        byOrder.set(orderNum, { id: orderNum, orderNumber: orderNum, firstName, lastName, email, checkedIn: false, tickets });
+        all.push(byOrder.get(orderNum)!);
       }
     }
 
