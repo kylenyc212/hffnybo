@@ -1,104 +1,171 @@
-import { useEffect, useState } from 'react';
-import { importPassholders, listPassholders, parsePassholderCSV } from '../../lib/admin';
+import { useEffect, useRef, useState } from 'react';
+import { listPassholders, updatePassholder } from '../../lib/admin';
 import type { PassholderRow } from '../../lib/database.types';
 
-export function PassholdersPanel() {
-  const [list, setList] = useState<PassholderRow[]>([]);
-  const [text, setText] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [replace, setReplace] = useState(false);
+// Inline-editable row: auto-saves on blur if the name changed.
+function PassRow({ pass, onSaved }: { pass: PassholderRow; onSaved: (id: string, name: string) => void }) {
+  const [draft, setDraft]   = useState(pass.name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved]   = useState(false);
+  const [err, setErr]       = useState<string | null>(null);
+  const original = useRef(pass.name ?? '');
 
-  async function reload() {
-    try { setList(await listPassholders()); }
-    catch (e: unknown) { setErr(e instanceof Error ? e.message : 'Load failed'); }
-  }
-  useEffect(() => { reload(); }, []);
+  // Keep draft in sync if parent refreshes (e.g. after initial load)
+  useEffect(() => {
+    setDraft(pass.name ?? '');
+    original.current = pass.name ?? '';
+  }, [pass.name]);
 
-  async function doImport() {
-    setErr(null); setMsg(null);
-    const { rows, errors } = parsePassholderCSV(text);
-    if (errors.length) setErr(`Parse warnings:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n…and ${errors.length - 5} more` : ''}`);
-    if (rows.length === 0) { setErr('Nothing to import'); return; }
-    setBusy(true);
+  async function save() {
+    if (draft === original.current) return; // nothing changed
+    setSaving(true);
+    setErr(null);
     try {
-      const { inserted } = await importPassholders(rows, replace);
-      setMsg(`Imported ${inserted} passholders${replace ? ' (replaced existing)' : ' (added or updated)'}.`);
-      setText('');
-      await reload();
+      await updatePassholder(pass.id, draft);
+      original.current = draft;
+      onSaved(pass.id, draft);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Import failed');
+      setErr(e instanceof Error ? e.message : 'Save failed');
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
-  const lastSync = list.reduce((mx, r) => (r.synced_at > mx ? r.synced_at : mx), '');
+  return (
+    <tr className="border-t border-slate-700 group">
+      <td className="py-1.5 pr-3 font-mono text-xs text-slate-400 whitespace-nowrap">{pass.barcode}</td>
+      <td className="py-1 w-full">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => { setDraft(e.target.value); setSaved(false); }}
+          onBlur={save}
+          onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur())}
+          placeholder="— unassigned —"
+          className="w-full bg-transparent border border-transparent focus:border-slate-600 focus:bg-slate-900 rounded px-2 py-0.5 text-sm outline-none placeholder-slate-600"
+        />
+      </td>
+      <td className="py-1 pl-2 w-8 text-right">
+        {saving && <span className="text-xs text-slate-500">…</span>}
+        {saved  && <span className="text-xs text-emerald-400">✓</span>}
+        {err    && <span className="text-xs text-red-400" title={err}>!</span>}
+      </td>
+    </tr>
+  );
+}
+
+export function PassholdersPanel() {
+  const [passes, setPasses] = useState<PassholderRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  async function reload() {
+    setLoading(true);
+    try {
+      const all = await listPassholders();
+      // Sort: ACS first then CIN25, numerically within each series
+      all.sort((a, b) => {
+        const seriesA = a.barcode.startsWith('ACS') ? 0 : 1;
+        const seriesB = b.barcode.startsWith('ACS') ? 0 : 1;
+        if (seriesA !== seriesB) return seriesA - seriesB;
+        return a.barcode.localeCompare(b.barcode, undefined, { numeric: true });
+      });
+      setPasses(all);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Load failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { reload(); }, []);
+
+  function handleSaved(id: string, name: string) {
+    setPasses((prev) => prev.map((p) => p.id === id ? { ...p, name } : p));
+  }
+
+  const acs   = passes.filter((p) => p.barcode.startsWith('ACS'));
+  const cin25 = passes.filter((p) => p.barcode.startsWith('CIN25'));
+
+  const q = search.trim().toLowerCase();
+  const filterRows = (rows: PassholderRow[]) =>
+    q ? rows.filter((p) =>
+      p.barcode.toLowerCase().includes(q) ||
+      (p.name ?? '').toLowerCase().includes(q)
+    ) : rows;
+
+  const assigned   = passes.filter((p) => (p.name ?? '').trim()).length;
+  const unassigned = passes.length - assigned;
+
+  if (loading) return <div className="text-sm text-slate-400 py-6 text-center">Loading passes…</div>;
+  if (err)     return <div className="text-sm text-red-400 py-4">{err} <button onClick={reload} className="underline ml-2">Retry</button></div>;
 
   return (
     <div className="space-y-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <div className="text-lg font-semibold">{list.length} passholders</div>
-            {lastSync && (
-              <div className="text-xs text-slate-400">
-                Last sync {new Date(lastSync).toLocaleString('en-US', { timeZone: 'America/New_York' })}
-              </div>
-            )}
-          </div>
+      {/* Stats + search */}
+      <div className="flex items-center gap-3">
+        <div className="text-sm text-slate-400 shrink-0">
+          <span className="text-white font-semibold">{assigned}</span>/{passes.length} assigned
+          {unassigned > 0 && <span className="text-slate-500 ml-2">({unassigned} open)</span>}
         </div>
-        <div className="text-sm text-slate-400 mb-2">
-          Paste CSV below. Format: <code className="bg-slate-900 px-1 rounded">Name, Email, Barcode</code> (header row optional). Two columns OK if you just have Name + Barcode.
-          <div className="mt-1">Export your Google Sheet as CSV (File → Download → CSV) and paste.</div>
-        </div>
-        <textarea
-          className="w-full h-40 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono text-sm"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Jane Doe, jane@example.com, P00001&#10;John Smith, john@example.com, P00002"
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name or barcode…"
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm"
+          autoCapitalize="off"
+          autoCorrect="off"
         />
-        <label className="flex items-center gap-2 mt-2 text-sm">
-          <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-          Replace all existing passholders (uncheck to merge by barcode)
-        </label>
-        {err && <div className="text-red-400 text-sm whitespace-pre-wrap mt-2">{err}</div>}
-        {msg && <div className="text-emerald-400 text-sm mt-2">{msg}</div>}
-        <button
-          disabled={busy || !text.trim()}
-          onClick={doImport}
-          className="mt-3 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg"
-        >
-          {busy ? 'Importing…' : 'Import passholders'}
-        </button>
       </div>
 
-      {list.length > 0 && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-          <div className="text-sm font-semibold mb-2">Current list ({list.length})</div>
-          <div className="max-h-80 overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-slate-400">
-                <tr>
-                  <th className="text-left font-normal py-1">Name</th>
-                  <th className="text-left font-normal py-1">Email</th>
-                  <th className="text-left font-normal py-1">Barcode</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.slice(0, 500).map((p) => (
-                  <tr key={p.id} className="border-t border-slate-700">
-                    <td className="py-1">{p.name}</td>
-                    <td className="py-1 text-slate-400">{p.email ?? ''}</td>
-                    <td className="py-1 font-mono text-xs">{p.barcode}</td>
-                  </tr>
+      <p className="text-xs text-slate-500">
+        Tap a name field to edit · press Enter or tap away to save
+      </p>
+
+      {/* ACS series */}
+      {filterRows(acs).length > 0 && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+          <div className="px-4 py-2 bg-slate-700/50 text-xs font-semibold text-slate-300 flex justify-between">
+            <span>ACS passes ({acs.length})</span>
+            <span className="text-slate-500">{acs.filter((p) => (p.name ?? '').trim()).length} assigned</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full px-4">
+              <tbody className="divide-y divide-slate-700/0">
+                {filterRows(acs).map((p) => (
+                  <PassRow key={p.id} pass={p} onSaved={handleSaved} />
                 ))}
               </tbody>
             </table>
-            {list.length > 500 && <div className="text-xs text-slate-500 mt-2">Showing first 500.</div>}
           </div>
         </div>
+      )}
+
+      {/* CIN25 series */}
+      {filterRows(cin25).length > 0 && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+          <div className="px-4 py-2 bg-slate-700/50 text-xs font-semibold text-slate-300 flex justify-between">
+            <span>CIN25 passes ({cin25.length})</span>
+            <span className="text-slate-500">{cin25.filter((p) => (p.name ?? '').trim()).length} assigned</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full px-4">
+              <tbody>
+                {filterRows(cin25).map((p) => (
+                  <PassRow key={p.id} pass={p} onSaved={handleSaved} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {q && filterRows(acs).length === 0 && filterRows(cin25).length === 0 && (
+        <div className="text-sm text-slate-500 text-center py-6">No passes match "{search}"</div>
       )}
     </div>
   );

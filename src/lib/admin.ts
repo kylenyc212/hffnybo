@@ -123,6 +123,14 @@ function splitCSVRow(line: string): string[] {
   return out;
 }
 
+export async function updatePassholder(id: string, name: string) {
+  const { error } = await supabase
+    .from('passholders')
+    .update({ name: name.trim(), synced_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
 export async function importPassholders(rows: ParsedPass[], replace: boolean) {
   if (replace) {
     // Delete everything first.
