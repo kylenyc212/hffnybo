@@ -1,4 +1,7 @@
 import { useRef, useState } from 'react';
+import { parseHeartlandReceipt } from '../lib/heartland-receipt';
+import type { ParsedHeartlandReceipt } from '../lib/heartland-receipt';
+import { HeartlandReceiptModal } from './HeartlandReceiptModal';
 
 interface Props {
   onExtracted: (name: string, ref: string) => void;
@@ -9,12 +12,13 @@ type Phase = 'idle' | 'capturing' | 'captured' | 'ocr' | 'done' | 'error';
 
 export function ScreenshotOCR({ onExtracted, onClose }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [phase, setPhase]     = useState<Phase>('idle');
-  const [errMsg, setErrMsg]   = useState('');
-  const [imgUrl, setImgUrl]   = useState<string | null>(null);
-  const [rawText, setRawText] = useState('');
-  const [name, setName]       = useState('');
-  const [ref, setRef]         = useState('');
+  const [phase, setPhase]         = useState<Phase>('idle');
+  const [errMsg, setErrMsg]       = useState('');
+  const [imgUrl, setImgUrl]       = useState<string | null>(null);
+  const [rawText, setRawText]     = useState('');
+  const [name, setName]           = useState('');
+  const [ref, setRef]             = useState('');
+  const [parsedReceipt, setParsedReceipt] = useState<ParsedHeartlandReceipt | null>(null);
 
   async function pasteFromClipboard() {
     setPhase('capturing');
@@ -108,9 +112,16 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
       await worker.terminate();
       setRawText(text);
 
-      // Heuristically extract name + order/receipt number
+      // Try to parse as a Heartland receipt first
+      const receipt = parseHeartlandReceipt(text);
+      if (receipt.items.length > 0) {
+        // Looks like a real receipt — show the full cart import modal
+        setParsedReceipt(receipt);
+      }
+
+      // Also extract name + ref as fallback
       const extractedName = extractName(text);
-      const extractedRef  = extractRef(text);
+      const extractedRef  = extractRef(text) || receipt.receiptNumber;
       setName(extractedName);
       setRef(extractedRef);
       setPhase('done');
@@ -236,43 +247,51 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
             {imgUrl && (
               <img src={imgUrl} alt="Captured" className="w-full rounded-xl border border-slate-600 max-h-40 object-contain bg-black" />
             )}
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
-              <div className="text-sm font-semibold text-slate-300">Extracted — edit if needed:</div>
-              <label className="block">
-                <div className="text-xs text-slate-400 mb-1">Customer name</div>
-                <input
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Not found — type manually"
-                  autoCapitalize="words"
-                />
-              </label>
-              <label className="block">
-                <div className="text-xs text-slate-400 mb-1">Order / receipt #</div>
-                <input
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 font-mono"
-                  value={ref}
-                  onChange={(e) => setRef(e.target.value)}
-                  placeholder="Not found — type manually"
-                  autoCapitalize="off"
-                />
-              </label>
-            </div>
+
+            {/* If we found a real Heartland receipt, show the cart import option */}
+            {parsedReceipt ? (
+              <div className="space-y-3">
+                <div className="bg-emerald-900/40 border border-emerald-700 rounded-xl p-3 text-sm text-emerald-200">
+                  ✓ Heartland receipt detected — {parsedReceipt.items.length} item{parsedReceipt.items.length !== 1 ? 's' : ''} found
+                </div>
+                <button
+                  onClick={() => {/* HeartlandReceiptModal shows below */}}
+                  className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl text-lg"
+                  // The modal is always shown when parsedReceipt is set
+                >
+                  Import items to cart →
+                </button>
+                <button onClick={() => setPhase('idle')} className="w-full text-slate-400 hover:text-white text-sm py-2">
+                  ← Scan again
+                </button>
+              </div>
+            ) : (
+              /* Fallback: just name + ref extraction */
+              <div className="space-y-3">
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+                  <div className="text-sm text-slate-400">No receipt items found. Edit and use manually:</div>
+                  <label className="block">
+                    <div className="text-xs text-slate-400 mb-1">Customer name</div>
+                    <input className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Not found" autoCapitalize="words" />
+                  </label>
+                  <label className="block">
+                    <div className="text-xs text-slate-400 mb-1">Receipt #</div>
+                    <input className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 font-mono" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Not found" autoCapitalize="off" />
+                  </label>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setPhase('idle')} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">← Redo</button>
+                  <button onClick={apply} className="flex-[2] bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl">Use these ✓</button>
+                </div>
+              </div>
+            )}
+
             {rawText && (
-              <details className="text-xs text-slate-600">
-                <summary className="cursor-pointer hover:text-slate-400">Show all OCR text</summary>
+              <details className="text-xs text-slate-600 pb-4">
+                <summary className="cursor-pointer hover:text-slate-400">Show raw OCR text</summary>
                 <pre className="mt-2 bg-slate-950 rounded p-2 whitespace-pre-wrap text-slate-500 max-h-40 overflow-auto">{rawText}</pre>
               </details>
             )}
-            <div className="flex gap-2">
-              <button onClick={() => setPhase('idle')} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
-                ← Redo
-              </button>
-              <button onClick={apply} className="flex-[2] bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl">
-                Use these ✓
-              </button>
-            </div>
           </div>
         )}
 
@@ -287,6 +306,18 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
           </div>
         )}
       </div>
+
+      {/* Full receipt import modal — shown on top when a receipt is parsed */}
+      {parsedReceipt && phase === 'done' && (
+        <HeartlandReceiptModal
+          receipt={parsedReceipt}
+          onConfirm={(receiptRef) => {
+            onExtracted('', receiptRef); // set the ref # in CartPage
+            onClose();
+          }}
+          onClose={() => setParsedReceipt(null)}
+        />
+      )}
     </div>
   );
 }

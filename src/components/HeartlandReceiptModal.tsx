@@ -1,0 +1,153 @@
+import { useEffect, useState } from 'react';
+import { money } from '../lib/money';
+import { fmtWhen } from '../lib/datetime';
+import { matchReceiptItems, matchedItemsToCartLines } from '../lib/heartland-receipt';
+import type { ParsedHeartlandReceipt, MatchedItem } from '../lib/heartland-receipt';
+import { useCart } from '../lib/cart';
+
+interface Props {
+  receipt: ParsedHeartlandReceipt;
+  onConfirm: (receiptNumber: string) => void; // caller switches to CC mode + sets ref
+  onClose: () => void;
+}
+
+export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
+  const addLine = useCart((s) => s.addLine);
+  const [matched, setMatched] = useState<MatchedItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr]         = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    matchReceiptItems(receipt.items)
+      .then(setMatched)
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Match failed'))
+      .finally(() => setLoading(false));
+  }, [receipt]);
+
+  function confirm() {
+    if (!matched) return;
+    const lines = matchedItemsToCartLines(matched);
+    for (const line of lines) addLine(line);
+    onConfirm(receipt.receiptNumber || receipt.invoiceNumber);
+    onClose();
+  }
+
+  const unmatched = matched?.filter((m) => !m.matched).length ?? 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-50 flex flex-col p-4 overflow-auto">
+      <div className="max-w-lg mx-auto w-full space-y-4">
+
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-bold text-lg">Heartland Receipt</div>
+            {receipt.receiptNumber && (
+              <div className="text-xs text-slate-400 font-mono">#{receipt.receiptNumber}</div>
+            )}
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        {/* Receipt summary */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-2">
+          {receipt.cardBrand && (
+            <div className="text-xs text-slate-400">
+              {receipt.cardBrand}{receipt.cardLast4 ? ` ···· ${receipt.cardLast4}` : ''}
+            </div>
+          )}
+          <div className="space-y-1">
+            {receipt.items.map((item, i) => (
+              <div key={i} className="flex justify-between text-sm">
+                <span className="text-slate-300 font-mono text-xs">{item.rawName} ×{item.qty}</span>
+                <span className="tabular-nums">{money(item.qty * item.unitPriceCents)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-slate-700 pt-2 flex justify-between font-bold">
+            <span>Total</span>
+            <span className="tabular-nums">{money(receipt.totalCents)}</span>
+          </div>
+        </div>
+
+        {/* Matching results */}
+        {loading && (
+          <div className="text-slate-400 text-sm text-center py-4">Matching to screenings…</div>
+        )}
+
+        {err && (
+          <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-xl">{err}</div>
+        )}
+
+        {matched && (
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              Will add to cart:
+            </div>
+            {matched.map((m, i) => (
+              <div
+                key={i}
+                className={`rounded-xl border p-3 ${
+                  m.matched
+                    ? 'bg-emerald-950/40 border-emerald-800'
+                    : 'bg-amber-950/30 border-amber-800'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm leading-tight">
+                      {m.matched ? m.label : m.raw.rawName}
+                      {m.raw.qty > 1 && <span className="text-slate-400 ml-1">×{m.raw.qty}</span>}
+                    </div>
+                    {m.matched && m.screeningTitle && (
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {m.screeningTitle}
+                        {m.screeningStartsAt ? ` · ${fmtWhen(m.screeningStartsAt)}` : ''}
+                      </div>
+                    )}
+                    {!m.matched && (
+                      <div className="text-xs text-amber-400 mt-0.5">
+                        No matching screening found — will record as-is
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="tabular-nums font-semibold">{money(m.raw.qty * m.raw.unitPriceCents)}</div>
+                    <div className={`text-xs mt-0.5 ${m.matched ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {m.matched ? '✓ matched' : '⚠ unmatched'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {unmatched > 0 && (
+              <div className="text-xs text-amber-400 px-1">
+                {unmatched} item{unmatched > 1 ? 's' : ''} couldn't be matched to a screening — they'll be added with the Heartland name. You can set up Heartland SKUs in Admin → Ticket Types to fix this.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        {matched && (
+          <div className="flex gap-2 pb-4">
+            <button
+              onClick={onClose}
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirm}
+              className="flex-[2] bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl"
+            >
+              Add to cart ✓
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
