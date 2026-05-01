@@ -290,10 +290,18 @@ export function CartPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-4 gap-4">
+      <div className="flex items-center justify-between mb-3 gap-4">
         <h1 className="text-2xl font-bold">Cart</h1>
         <Link to="/catalog" className="text-slate-400 hover:text-white">← Screenings</Link>
       </div>
+
+      {/* ── Heartland shortcut — always visible ── */}
+      <button
+        onClick={() => { window.location.href = 'shortcuts://run-shortcut?name=HFFNY%20Receipt'; }}
+        className="w-full mb-4 bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold py-4 rounded-xl text-base flex items-center justify-center gap-2"
+      >
+        ⚡ Scan Heartland receipt
+      </button>
 
       {!drawerLoading && !drawer && needsCash && (
         <div className="bg-amber-900/40 border border-amber-700 rounded-xl p-4 mb-4 flex items-start justify-between gap-4">
@@ -441,17 +449,6 @@ export function CartPage() {
                     <div className="text-xs text-slate-400">
                       Charge on Heartland first, then record the details below.
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Run the iOS Shortcut — it will screenshot, OCR,
-                        // and reopen this app at /cart?hr=receipt_text
-                        window.location.href = 'shortcuts://run-shortcut?name=HFFNY%20Receipt';
-                      }}
-                      className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-lg"
-                    >
-                      ⚡ Scan with Shortcut
-                    </button>
                     <button
                       type="button"
                       onClick={() => setOcrOpen(true)}
