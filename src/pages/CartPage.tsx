@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useCart, type CartLine } from '../lib/cart';
 import { useSession } from '../lib/session';
 import { money, toCents } from '../lib/money';
@@ -10,10 +10,14 @@ import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
 import { ScreenshotOCR } from '../components/ScreenshotOCR';
+import { HeartlandReceiptModal } from '../components/HeartlandReceiptModal';
+import { parseHeartlandReceipt } from '../lib/heartland-receipt';
+import type { ParsedHeartlandReceipt } from '../lib/heartland-receipt';
 import { getCheckinLinesForOrder, checkInOrderLine, uncheckInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 
 export function CartPage() {
   const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, deviceLabel } = useSession();
   const lines = useCart((s) => s.lines);
   const updateQty = useCart((s) => s.updateQty);
@@ -39,8 +43,26 @@ export function CartPage() {
   const [cEmail, setCEmail] = useState('');
   const [cPhone, setCPhone] = useState('');
   const [cAddress, setCAddress] = useState('');
-  const [scanOpen, setScanOpen] = useState(false);
-  const [ocrOpen, setOcrOpen]   = useState(false);
+  const [scanOpen, setScanOpen]           = useState(false);
+  const [ocrOpen, setOcrOpen]             = useState(false);
+  const [shortcutReceipt, setShortcutReceipt] = useState<ParsedHeartlandReceipt | null>(null);
+
+  // Handle ?hr= param injected by the iOS Shortcut
+  useEffect(() => {
+    const hr = searchParams.get('hr');
+    if (!hr) return;
+    try {
+      const text    = decodeURIComponent(hr);
+      const receipt = parseHeartlandReceipt(text);
+      if (receipt.items.length > 0) {
+        setShortcutReceipt(receipt);
+        setPayMethod('external');
+      }
+    } catch { /* ignore malformed param */ }
+    // Remove param from URL so refresh doesn't re-trigger
+    setSearchParams((p) => { p.delete('hr'); return p; }, { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-populate customer name from cart lines: if exactly one distinct patron
   // name exists across comp lines (a single person bought all the comps),
@@ -548,6 +570,15 @@ export function CartPage() {
             if (extractedName) setCName(extractedName);
             if (extractedRef)  setExternalRef(extractedRef);
           }}
+        />
+      )}
+
+      {/* Auto-shown when Shortcut passes ?hr= receipt text via URL */}
+      {shortcutReceipt && (
+        <HeartlandReceiptModal
+          receipt={shortcutReceipt}
+          onConfirm={(ref) => { setExternalRef(ref); setPayMethod('external'); }}
+          onClose={() => setShortcutReceipt(null)}
         />
       )}
     </div>
