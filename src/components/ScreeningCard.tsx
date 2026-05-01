@@ -5,7 +5,6 @@ import { money, toCents } from '../lib/money';
 import { fmtTime } from '../lib/datetime';
 import type { ScreeningWithSold } from '../lib/queries';
 import type { TicketTypeRow } from '../lib/database.types';
-import { PassScanner } from './PassScanner';
 import { recordManualCheckin } from '../lib/checkins';
 
 interface Props {
@@ -17,7 +16,6 @@ interface Props {
 export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
   const addLine = useCart((s) => s.addLine);
   const { user } = useSession();
-  const [scanOpen, setScanOpen] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
   const [otherLabel, setOtherLabel] = useState('');
   const [otherAmount, setOtherAmount] = useState('');
@@ -201,27 +199,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
               </div>
             </button>
           ))}
-          {!alwaysAvailable && (
-            <button
-              onClick={() => setScanOpen(true)}
-              className="bg-emerald-800 hover:bg-emerald-700 border border-emerald-700 rounded-lg px-3 py-3 text-left"
-            >
-              <div className="text-xs text-emerald-200">Pass</div>
-              <div className="font-semibold text-sm">Scan ▸</div>
-            </button>
-          )}
         </div>
-      )}
-
-      {scanOpen && (
-        <PassScanner
-          onClose={() => setScanOpen(false)}
-          onFound={(ph) => {
-            const passType = comps.find((t) => t.comp_category === 'pass_holder') ?? comps[0];
-            if (passType) addOne(passType, { patronName: ph.name, passholderId: ph.id });
-            setScanOpen(false);
-          }}
-        />
       )}
     </div>
   );

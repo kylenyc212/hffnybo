@@ -128,6 +128,48 @@ function DrawerReportView() {
 }
 
 function DrawerReportBody({ report }: { report: DrawerReport }) {
+  function buildReportText(): string {
+    const m = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    const lines: string[] = [
+      `HFFNY Box Office — End of Day Report`,
+      `Shift date: ${report.drawer.shift_date}`,
+      `Device: ${report.drawer.device_label}`,
+      `Opened by: ${report.drawer.opened_by}`,
+      report.drawer.closed_by ? `Closed by: ${report.drawer.closed_by}` : '',
+      ``,
+      `── CASH RECONCILIATION ──`,
+      `Opening:  ${m(report.openingCents)}`,
+      `Sales:    ${m(report.salesCents)} (${report.salesCount} transactions)`,
+      report.addsCents ? `Added:    ${m(report.addsCents)}` : '',
+      `Removals: ${m(report.removalsCents)}`,
+      `Expected: ${m(report.expectedCents)}`,
+      report.countedCents !== null ? `Counted:  ${m(report.countedCents)}` : '',
+      report.varianceCents !== null ? `Variance: ${report.varianceCents >= 0 ? '+' : ''}${m(report.varianceCents)}` : '',
+      ``,
+      `── PER-SCREENING ──`,
+      ...report.screenings.flatMap((s) => [
+        ``,
+        `${s.title} (${s.starts_at})`,
+        ...s.byLabel.map((l) => `  ${l.label.padEnd(30)} x${l.qty}  ${m(l.totalCents)}`),
+        `  ${'TOTAL'.padEnd(30)}     ${m(s.totalCents)}`,
+      ]),
+    ];
+    if (report.removalsList.length > 0) {
+      lines.push('', '── REMOVALS ──');
+      for (const r of report.removalsList) {
+        const t = new Date(r.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+        lines.push(`  ${t} ${r.who}: ${m(r.amount_cents)}${r.reason ? ` — ${r.reason}` : ''}`);
+      }
+    }
+    return lines.filter((l) => l !== null).join('\n');
+  }
+
+  function emailReport() {
+    const subject = `HFFNY Box Office — ${report.drawer.shift_date} (${report.drawer.device_label})`;
+    const body = buildReportText();
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
   function exportCSV() {
     const rows: (string | number)[][] = [
       ['HFFNY Box Office — Drawer report'],
@@ -175,9 +217,14 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="text-lg font-semibold">Cash reconciliation</div>
-          <button onClick={exportCSV} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
-            Download CSV
-          </button>
+          <div className="flex gap-2">
+            <button onClick={emailReport} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
+              Email ✉
+            </button>
+            <button onClick={exportCSV} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
+              Download CSV
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <Cell label="Opening" value={money(report.openingCents)} />
