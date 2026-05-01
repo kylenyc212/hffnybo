@@ -13,6 +13,7 @@ import { HeartlandReceiptModal } from '../components/HeartlandReceiptModal';
 import { parseHeartlandReceipt } from '../lib/heartland-receipt';
 import type { ParsedHeartlandReceipt } from '../lib/heartland-receipt';
 import { getCheckinLinesForOrder, checkInOrderLine, uncheckInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
+import { sendReceiptEmail } from '../lib/email';
 
 export function CartPage() {
   const nav = useNavigate();
@@ -30,9 +31,11 @@ export function CartPage() {
   const [tenderStr, setTenderStr] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string; ref: string | null; name: string | null } | null>(null);
+  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string; ref: string | null; name: string | null; email: string | null; lines: typeof lines } | null>(null);
   const [checkoutLines, setCheckoutLines] = useState<OrderLineWithScreening[] | null>(null);
   const [checkingIn, setCheckingIn] = useState<Set<string>>(new Set());
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailResult, setEmailResult] = useState<'sent' | 'error' | null>(null);
   const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
   const [externalRef, setExternalRef] = useState('');
 
@@ -150,6 +153,8 @@ export function CartPage() {
         orderId: result.orderId,
         ref: isExternal ? (externalRef.trim() || null) : null,
         name: cName.trim() || null,
+        email: cEmail.trim() || null,
+        lines: [...lines], // snapshot before clear()
       });
       // Load order_lines for post-checkout check-in (only works when synced)
       if (result.synced) {
@@ -269,9 +274,60 @@ export function CartPage() {
         {!lastSale?.synced && (
           <div className="mt-3 text-xs text-slate-500 text-center">Door check-in available once back online.</div>
         )}
-        <div className="mt-6 flex gap-3">
+        {/* Email receipt */}
+        {lastSale?.email && lastSale.synced && (
+          <div className="mt-4">
+            {emailResult === 'sent' ? (
+              <div className="text-center text-emerald-400 text-sm font-semibold py-2">
+                ✓ Receipt sent to {lastSale.email}
+              </div>
+            ) : emailResult === 'error' ? (
+              <div className="text-center text-red-400 text-sm py-2">
+                Failed to send — check email settings
+              </div>
+            ) : (
+              <button
+                disabled={emailSending}
+                onClick={async () => {
+                  if (!lastSale?.email || !user) return;
+                  setEmailSending(true);
+                  setEmailResult(null);
+                  try {
+                    await sendReceiptEmail({
+                      to: lastSale.email,
+                      orderRef: lastSale.ref,
+                      cashierName: user.name,
+                      items: lastSale.lines.map((l) => ({
+                        label: l.label,
+                        screeningTitle: l.screeningTitle,
+                        qty: l.qty,
+                        unitPriceCents: l.unitPriceCents,
+                      })),
+                      totalCents: lastSale.subtotalCents,
+                      payMethod: lastSale.external ? 'external' : 'cash',
+                    });
+                    setEmailResult('sent');
+                  } catch {
+                    setEmailResult('error');
+                  } finally {
+                    setEmailSending(false);
+                  }
+                }}
+                className="w-full bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl"
+              >
+                {emailSending ? 'Sending…' : `📧 Email receipt to ${lastSale.email}`}
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 flex gap-3">
           <button
-            onClick={() => { setLastSale(null); setCheckoutLines(null); setCheckingIn(new Set()); nav('/catalog'); }}
+            onClick={() => {
+              setLastSale(null); setCheckoutLines(null);
+              setCheckingIn(new Set()); setEmailResult(null);
+              nav('/catalog');
+            }}
             className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl"
           >
             New sale
