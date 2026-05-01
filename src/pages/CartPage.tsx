@@ -45,6 +45,8 @@ export function CartPage() {
   const [cAddress, setCAddress] = useState('');
   const [scanOpen, setScanOpen]           = useState(false);
   const [ocrOpen, setOcrOpen]             = useState(false);
+  const [pasteOpen, setPasteOpen]         = useState(false);
+  const [pasteText, setPasteText]         = useState('');
   const [shortcutReceipt, setShortcutReceipt] = useState<ParsedHeartlandReceipt | null>(null);
 
   // Handle ?sc=1 flag from the iOS Shortcut.
@@ -307,12 +309,40 @@ export function CartPage() {
       </div>
 
       {/* ── Heartland shortcut — always visible ── */}
-      <button
-        onClick={() => { window.location.href = 'shortcuts://run-shortcut?name=HFFNY%20Receipt'; }}
-        className="w-full mb-4 bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold py-4 rounded-xl text-base flex items-center justify-center gap-2"
-      >
-        ⚡ Scan Heartland receipt
-      </button>
+      {!pasteOpen ? (
+        <button
+          onClick={() => { setPasteOpen(true); setPasteText(''); }}
+          className="w-full mb-4 bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold py-4 rounded-xl text-base"
+        >
+          ⚡ Scan Heartland receipt
+        </button>
+      ) : (
+        <div className="mb-4 bg-slate-800 border border-indigo-700 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-indigo-300">Paste Heartland receipt text</div>
+            <button onClick={() => setPasteOpen(false)} className="text-slate-500 hover:text-white text-lg leading-none">✕</button>
+          </div>
+          <textarea
+            autoFocus
+            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-300 resize-none"
+            placeholder="Long-press here → Paste"
+            value={pasteText}
+            onChange={(e) => {
+              const text = e.target.value;
+              setPasteText(text);
+              if (text.trim().length > 20) {
+                const receipt = parseHeartlandReceipt(text);
+                if (receipt.items.length > 0 || receipt.receiptNumber) {
+                  setShortcutReceipt({ ...receipt, _rawText: text } as ParsedHeartlandReceipt & { _rawText: string });
+                  setPasteOpen(false);
+                  setPasteText('');
+                }
+              }
+            }}
+          />
+          <div className="text-xs text-slate-500">Run the HFFNY Receipt shortcut first, then paste here</div>
+        </div>
+      )}
 
       {!drawerLoading && !drawer && needsCash && (
         <div className="bg-amber-900/40 border border-amber-700 rounded-xl p-4 mb-4 flex items-start justify-between gap-4">
