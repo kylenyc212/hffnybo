@@ -71,8 +71,9 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
   if (items.length === 0) {
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-    // Collect all "ITEM NAME (xN)" lines
-    const nameRe = /^(.+?)\s+\(x(\d+)\)\s*$/;
+    // Collect all "ITEM NAME (xN)" lines.
+    // Allow trailing junk (e.g. "|" from OCR column bleed) after the (xN).
+    const nameRe = /^(.+?)\s+\(x(\d+)\)\s*[^a-z\d]*$/i;
     const itemLines: { idx: number; name: string; qty: number }[] = [];
     for (let i = 0; i < lines.length; i++) {
       const lm = nameRe.exec(lines[i]);
@@ -195,12 +196,18 @@ export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<Mat
       };
     }
 
-    // 2. Parse Heartland name format: "WORD DATE TIME SUFFIX"
-    //    e.g. "CIRCE 5/2 1PM SS" → code=CIRCE, date=5/2, time=1PM, suffix=SS
+    // 2. Parse Heartland name format: "FILM TITLE M/D TIME SUFFIX"
+    //    Works for single-word titles ("CIRCE 5/2 1PM SS") and
+    //    multi-word titles ("AUN ES DE NOCHE EN CARACAS 5/1 6PM SS").
+    //    Scan for the M/D date token; everything before it is the title
+    //    (we use the first word as the code for title matching), and
+    //    everything two tokens after it is the type suffix (SS / GA / …).
     const parts = item.rawName.split(/\s+/);
-    const code     = parts[0] ?? '';           // e.g. "CIRCE"
-    const datePart = parts[1] ?? '';           // e.g. "5/2"
-    const suffix   = parts.slice(3).join(' '); // e.g. "SS" or "GA" (parts[2] = time, skip)
+    const dateIdx = parts.findIndex((p) => /^\d{1,2}\/\d{1,2}$/.test(p));
+    const code     = parts[0] ?? '';
+    const datePart = dateIdx >= 0 ? parts[dateIdx] : (parts[1] ?? '');
+    // suffix is the word(s) after the time token (dateIdx+1); fall back to parts[3+]
+    const suffix   = dateIdx >= 0 ? parts.slice(dateIdx + 2).join(' ') : parts.slice(3).join(' ');
 
     // Find screenings whose title contains the code word and
     // whose starts_at matches the date portion
