@@ -15,6 +15,7 @@ export interface ReceiptEmailParams {
   totalCents: number;
   payMethod: 'cash' | 'external';
   cardBrand?: string | null;
+  cardLast4?: string | null;
 }
 
 export async function sendReceiptEmail(params: ReceiptEmailParams): Promise<void> {
