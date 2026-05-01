@@ -16,6 +16,42 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
   const [name, setName]       = useState('');
   const [ref, setRef]         = useState('');
 
+  async function pasteFromClipboard() {
+    setPhase('capturing');
+    setErrMsg('');
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const url  = URL.createObjectURL(blob);
+          const img  = new Image();
+          img.onload = () => {
+            const canvas = canvasRef.current!;
+            canvas.width  = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d')!.drawImage(img, 0, 0);
+            setImgUrl(url);
+            setPhase('captured');
+          };
+          img.src = url;
+          return;
+        }
+      }
+      setErrMsg('No image found on clipboard. Take a screenshot, tap the thumbnail → Copy, then try again.');
+      setPhase('error');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('denied') || msg.includes('not allowed')) {
+        setErrMsg('Clipboard access denied. Tap "Allow" when Safari asks for permission.');
+      } else {
+        setErrMsg(`Could not read clipboard: ${msg}`);
+      }
+      setPhase('error');
+    }
+  }
+
   async function captureScreen() {
     setPhase('capturing');
     setErrMsg('');
@@ -101,22 +137,32 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
         <canvas ref={canvasRef} className="hidden" />
 
         {phase === 'idle' && (
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
-            <p className="text-sm text-slate-300">
-              Tap the button below. Your browser will ask you to share a window or screen.
-              Pick the Heartland window — the app will grab one frame and read the text.
-            </p>
-            <button
-              onClick={captureScreen}
-              className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-lg"
-            >
-              📸 Capture screen
-            </button>
-            <div className="border-t border-slate-700 pt-3">
-              <p className="text-xs text-slate-500 mb-2">Or pick a screenshot from your photo library:</p>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
+
+            {/* ── Option 1: Clipboard (iPad-friendly) ── */}
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Best on iPad</div>
+              <ol className="text-xs text-slate-400 space-y-0.5 pl-4 list-decimal mb-2">
+                <li>Take a screenshot (Power + Volume Up)</li>
+                <li>Tap the thumbnail → <strong className="text-slate-300">Copy</strong></li>
+                <li>Come back here and tap ↓</li>
+              </ol>
+              <button
+                onClick={pasteFromClipboard}
+                className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-lg"
+              >
+                📋 Paste screenshot
+              </button>
+            </div>
+
+            <div className="border-t border-slate-700" />
+
+            {/* ── Option 2: Photo library ── */}
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-slate-300 uppercase tracking-wide">From photo library</div>
               <label className="w-full block">
                 <span className="w-full block text-center bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl cursor-pointer">
-                  🖼 Import photo
+                  🖼 Import screenshot
                 </span>
                 <input
                   type="file"
@@ -139,6 +185,19 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
                   }}
                 />
               </label>
+            </div>
+
+            <div className="border-t border-slate-700" />
+
+            {/* ── Option 3: Screen capture (Mac/desktop only) ── */}
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Mac / desktop only</div>
+              <button
+                onClick={captureScreen}
+                className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl text-sm"
+              >
+                🖥 Capture window
+              </button>
             </div>
           </div>
         )}
