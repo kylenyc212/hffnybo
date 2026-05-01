@@ -164,10 +164,18 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
     return lines.filter((l) => l !== null).join('\n');
   }
 
-  function emailReport() {
-    const subject = `HFFNY Box Office — ${report.drawer.shift_date} (${report.drawer.device_label})`;
-    const body = buildReportText();
-    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  async function shareReport() {
+    const title   = `HFFNY Box Office — ${report.drawer.shift_date} (${report.drawer.device_label})`;
+    const text    = buildReportText();
+    // iOS share sheet (Mail, Messages, AirDrop, Notes, …)
+    if (navigator.share) {
+      try { await navigator.share({ title, text }); return; } catch { /* user cancelled */ return; }
+    }
+    // Desktop: try mailto
+    const mailto = `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(text)}`;
+    const a = document.createElement('a');
+    a.href = mailto;
+    a.click();
   }
 
   function exportCSV() {
@@ -218,8 +226,8 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
         <div className="flex items-center justify-between mb-3">
           <div className="text-lg font-semibold">Cash reconciliation</div>
           <div className="flex gap-2">
-            <button onClick={emailReport} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
-              Email ✉
+            <button onClick={shareReport} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
+              Share ↑
             </button>
             <button onClick={exportCSV} className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg">
               Download CSV
