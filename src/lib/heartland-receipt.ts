@@ -89,12 +89,32 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
       );
       const searchEnd = boundaryIdx !== -1 ? boundaryIdx : lines.length;
 
-      // Collect bare "$XX.XX" price lines between last item and the boundary
+      // Collect bare "$XX.XX" price lines between last item and the boundary.
+      // When OCR reads left column then right column entirely, prices land
+      // AFTER "Totals" rather than before it — fall back to a full scan in
+      // that case, taking only the first N prices (N = number of items).
       const priceRe = /^\$(\d+\.\d{2})$/;
       const prices: number[] = [];
       for (let i = lastItemIdx + 1; i < searchEnd; i++) {
         const pm = priceRe.exec(lines[i]);
         if (pm) prices.push(Math.round(parseFloat(pm[1]) * 100));
+      }
+
+      if (prices.length < itemLines.length) {
+        // Prices weren't in the primary window — scan everything after the
+        // last item line and collect the first itemLines.length prices found.
+        const fallback: number[] = [];
+        for (
+          let i = lastItemIdx + 1;
+          i < lines.length && fallback.length < itemLines.length;
+          i++
+        ) {
+          const pm = priceRe.exec(lines[i]);
+          if (pm) fallback.push(Math.round(parseFloat(pm[1]) * 100));
+        }
+        if (fallback.length > prices.length) {
+          prices.splice(0, prices.length, ...fallback);
+        }
       }
 
       // Match names → prices positionally (item 1 gets first price, etc.)
