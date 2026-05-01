@@ -210,10 +210,14 @@ export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<Mat
     const suffix   = dateIdx >= 0 ? parts.slice(dateIdx + 2).join(' ') : parts.slice(3).join(' ');
 
     // Find screenings whose title contains the code word and
-    // whose starts_at matches the date portion
+    // whose starts_at matches the date portion.
+    // Strip diacritics so "AUN" matches "AÚN", "BELEN" matches "BELÉN", etc.
+    // ̀-ͯ = Unicode combining diacritical marks
+    const strip = (s: string) =>
+      s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
     const [mon, day] = datePart.split('/').map(Number);
     const matchingScreenings = screenings.filter((sc) => {
-      if (!code || !sc.title.toUpperCase().includes(code.toUpperCase())) return false;
+      if (!code || !strip(sc.title).includes(strip(code))) return false;
       if (!mon || !day) return true;
       const d = new Date(sc.starts_at);
       // month is 1-indexed in the receipt, 0-indexed in JS
