@@ -6,7 +6,7 @@ import type { ParsedHeartlandReceipt, MatchedItem } from '../lib/heartland-recei
 import { useCart } from '../lib/cart';
 
 interface Props {
-  receipt: ParsedHeartlandReceipt;
+  receipt: ParsedHeartlandReceipt & { _rawText?: string };
   onConfirm: (receiptNumber: string) => void; // caller switches to CC mode + sets ref
   onClose: () => void;
 }
@@ -71,8 +71,17 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
           </div>
         </div>
 
+        {/* If no items found, show raw OCR text for debugging */}
+        {receipt.items.length === 0 && receipt._rawText && (
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-2">
+            <div className="text-sm font-semibold text-amber-400">⚠ No items found — raw OCR text:</div>
+            <pre className="text-xs text-slate-400 whitespace-pre-wrap max-h-48 overflow-auto">{receipt._rawText}</pre>
+            <div className="text-xs text-slate-500">If you can see the receipt text above, the item format might not match. Share this with the developer.</div>
+          </div>
+        )}
+
         {/* Matching results */}
-        {loading && (
+        {loading && receipt.items.length > 0 && (
           <div className="text-slate-400 text-sm text-center py-4">Matching to screenings…</div>
         )}
 

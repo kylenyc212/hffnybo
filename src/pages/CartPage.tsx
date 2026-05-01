@@ -47,20 +47,31 @@ export function CartPage() {
   const [ocrOpen, setOcrOpen]             = useState(false);
   const [shortcutReceipt, setShortcutReceipt] = useState<ParsedHeartlandReceipt | null>(null);
 
-  // Handle ?hr= param injected by the iOS Shortcut
+  // Handle ?sc=1 flag from the iOS Shortcut.
+  // The Shortcut copies OCR text to clipboard then opens this URL.
+  // We read the clipboard here so the user doesn't have to tap anything.
   useEffect(() => {
-    const hr = searchParams.get('hr');
-    if (!hr) return;
-    try {
-      const text    = decodeURIComponent(hr);
-      const receipt = parseHeartlandReceipt(text);
-      if (receipt.items.length > 0) {
-        setShortcutReceipt(receipt);
-        setPayMethod('external');
+    const sc = searchParams.get('sc');
+    if (!sc) return;
+    setSearchParams((p) => { p.delete('sc'); return p; }, { replace: true });
+
+    (async () => {
+      try {
+        // Read plain text from clipboard (Shortcut put OCR text there)
+        const text = await navigator.clipboard.readText();
+        if (!text?.trim()) return;
+        const receipt = parseHeartlandReceipt(text);
+        if (receipt.items.length > 0) {
+          setShortcutReceipt(receipt);
+          setPayMethod('external');
+        } else {
+          // Has text but no items — show raw for manual review
+          setShortcutReceipt({ ...receipt, _rawText: text } as ParsedHeartlandReceipt & { _rawText: string });
+        }
+      } catch {
+        // Clipboard permission denied — fall back silently
       }
-    } catch { /* ignore malformed param */ }
-    // Remove param from URL so refresh doesn't re-trigger
-    setSearchParams((p) => { p.delete('hr'); return p; }, { replace: true });
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
