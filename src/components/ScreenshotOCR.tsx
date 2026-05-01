@@ -1,0 +1,273 @@
+import { useRef, useState } from 'react';
+
+interface Props {
+  onExtracted: (name: string, ref: string) => void;
+  onClose: () => void;
+}
+
+type Phase = 'idle' | 'capturing' | 'captured' | 'ocr' | 'done' | 'error';
+
+export function ScreenshotOCR({ onExtracted, onClose }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [phase, setPhase]     = useState<Phase>('idle');
+  const [errMsg, setErrMsg]   = useState('');
+  const [imgUrl, setImgUrl]   = useState<string | null>(null);
+  const [rawText, setRawText] = useState('');
+  const [name, setName]       = useState('');
+  const [ref, setRef]         = useState('');
+
+  async function captureScreen() {
+    setPhase('capturing');
+    setErrMsg('');
+    try {
+      // Ask the user to pick a window / screen to share
+      const stream = await (navigator.mediaDevices as MediaDevices & {
+        getDisplayMedia(c?: MediaStreamConstraints): Promise<MediaStream>;
+      }).getDisplayMedia({ video: true, audio: false });
+
+      // Pull one frame off the video track
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      const w = settings.width  ?? 1280;
+      const h = settings.height ?? 720;
+
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+
+      const canvas = canvasRef.current!;
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(video, 0, 0, w, h);
+
+      // Stop immediately — don't keep capturing
+      stream.getTracks().forEach((t) => t.stop());
+      video.remove();
+
+      const url = canvas.toDataURL('image/png');
+      setImgUrl(url);
+      setPhase('captured');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('denied') || msg.includes('cancel') || msg.includes('Permission')) {
+        setErrMsg('Screen access was cancelled or denied.');
+      } else if (msg.includes('not supported') || msg.includes('getDisplayMedia')) {
+        setErrMsg('Screen capture is not supported on this device/browser. Try taking a screenshot and using "Import photo" instead.');
+      } else {
+        setErrMsg(`Could not capture screen: ${msg}`);
+      }
+      setPhase('error');
+    }
+  }
+
+  async function runOCR() {
+    if (!canvasRef.current || !imgUrl) return;
+    setPhase('ocr');
+    try {
+      // Lazy-load Tesseract so it doesn't bloat initial bundle
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('eng');
+      const { data: { text } } = await worker.recognize(canvasRef.current);
+      await worker.terminate();
+      setRawText(text);
+
+      // Heuristically extract name + order/receipt number
+      const extractedName = extractName(text);
+      const extractedRef  = extractRef(text);
+      setName(extractedName);
+      setRef(extractedRef);
+      setPhase('done');
+    } catch (e: unknown) {
+      setErrMsg(`OCR failed: ${e instanceof Error ? e.message : String(e)}`);
+      setPhase('error');
+    }
+  }
+
+  function apply() {
+    onExtracted(name, ref);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-50 flex flex-col overflow-auto p-4">
+      <div className="max-w-xl mx-auto w-full space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="font-bold text-lg">Scan Heartland Receipt</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        {/* Hidden canvas used for capture + OCR */}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {phase === 'idle' && (
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+            <p className="text-sm text-slate-300">
+              Tap the button below. Your browser will ask you to share a window or screen.
+              Pick the Heartland window — the app will grab one frame and read the text.
+            </p>
+            <button
+              onClick={captureScreen}
+              className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-lg"
+            >
+              📸 Capture screen
+            </button>
+            <div className="border-t border-slate-700 pt-3">
+              <p className="text-xs text-slate-500 mb-2">Or pick a screenshot from your photo library:</p>
+              <label className="w-full block">
+                <span className="w-full block text-center bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl cursor-pointer">
+                  🖼 Import photo
+                </span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const url = URL.createObjectURL(file);
+                    const img = new Image();
+                    img.onload = () => {
+                      const canvas = canvasRef.current!;
+                      canvas.width  = img.width;
+                      canvas.height = img.height;
+                      canvas.getContext('2d')!.drawImage(img, 0, 0);
+                      setImgUrl(url);
+                      setPhase('captured');
+                    };
+                    img.src = url;
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {phase === 'capturing' && (
+          <div className="text-center py-12 text-slate-400">
+            <div className="text-4xl mb-3">📸</div>
+            <div>Choose a window to share in the browser prompt…</div>
+          </div>
+        )}
+
+        {phase === 'captured' && imgUrl && (
+          <div className="space-y-3">
+            <div className="text-sm text-slate-400">Captured — looks right?</div>
+            <img src={imgUrl} alt="Captured screen" className="w-full rounded-xl border border-slate-600 max-h-64 object-contain bg-black" />
+            <div className="flex gap-2">
+              <button onClick={() => { setPhase('idle'); setImgUrl(null); }} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
+                ← Retake
+              </button>
+              <button onClick={runOCR} className="flex-[2] bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl">
+                Read text →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'ocr' && (
+          <div className="text-center py-12 text-slate-400">
+            <div className="text-4xl mb-3">🔍</div>
+            <div>Reading text… this takes a few seconds</div>
+          </div>
+        )}
+
+        {phase === 'done' && (
+          <div className="space-y-3">
+            {imgUrl && (
+              <img src={imgUrl} alt="Captured" className="w-full rounded-xl border border-slate-600 max-h-40 object-contain bg-black" />
+            )}
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+              <div className="text-sm font-semibold text-slate-300">Extracted — edit if needed:</div>
+              <label className="block">
+                <div className="text-xs text-slate-400 mb-1">Customer name</div>
+                <input
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Not found — type manually"
+                  autoCapitalize="words"
+                />
+              </label>
+              <label className="block">
+                <div className="text-xs text-slate-400 mb-1">Order / receipt #</div>
+                <input
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 font-mono"
+                  value={ref}
+                  onChange={(e) => setRef(e.target.value)}
+                  placeholder="Not found — type manually"
+                  autoCapitalize="off"
+                />
+              </label>
+            </div>
+            {rawText && (
+              <details className="text-xs text-slate-600">
+                <summary className="cursor-pointer hover:text-slate-400">Show all OCR text</summary>
+                <pre className="mt-2 bg-slate-950 rounded p-2 whitespace-pre-wrap text-slate-500 max-h-40 overflow-auto">{rawText}</pre>
+              </details>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setPhase('idle')} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
+                ← Redo
+              </button>
+              <button onClick={apply} className="flex-[2] bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl">
+                Use these ✓
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="space-y-3">
+            <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-4 rounded-xl">
+              {errMsg}
+            </div>
+            <button onClick={() => setPhase('idle')} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl">
+              ← Try again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Heuristic extractors ──────────────────────────────────────────────────────
+
+function extractRef(text: string): string {
+  // Look for patterns like: Order #123456, Ref: 123456, Receipt 123456,
+  // Transaction 123456, Auth 123456, Approval 123456
+  const patterns = [
+    /(?:order|receipt|ref(?:erence)?|trans(?:action)?|auth(?:orization)?|approval|invoice)\s*[:#]?\s*([A-Z0-9-]{4,20})/gi,
+    /\b([A-Z]{2,4}-\d{4,10})\b/g,   // e.g. HL-123456
+    /\bTXN\s*([A-Z0-9]{4,20})\b/gi,
+  ];
+  for (const pat of patterns) {
+    const m = pat.exec(text);
+    if (m?.[1]) return m[1].trim();
+  }
+  // Fallback: longest standalone number 4–10 digits
+  const nums = text.match(/\b\d{4,10}\b/g) ?? [];
+  return nums.sort((a, b) => b.length - a.length)[0] ?? '';
+}
+
+function extractName(text: string): string {
+  // Heartland receipts often show cardholder name after "Name:" or on the
+  // signature line. Also look for "SALE" lines with a name above.
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^(?:name|cardholder|card holder|customer)[:\s]+(.+)/i);
+    if (m) return titleCase(m[1].trim());
+  }
+  // Heuristic: find a line that looks like "FIRSTNAME LASTNAME" (2 words, no digits)
+  for (const line of lines) {
+    if (/^[A-Z][a-zA-Z'-]+\s+[A-Z][a-zA-Z'-]+$/.test(line.trim())) {
+      return line.trim();
+    }
+  }
+  return '';
+}
+
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}

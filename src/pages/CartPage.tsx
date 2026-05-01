@@ -9,6 +9,7 @@ import { checkout } from '../lib/checkout';
 import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
+import { ScreenshotOCR } from '../components/ScreenshotOCR';
 import { getCheckinLinesForOrder, checkInOrderLine, uncheckInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 
 export function CartPage() {
@@ -39,6 +40,7 @@ export function CartPage() {
   const [cPhone, setCPhone] = useState('');
   const [cAddress, setCAddress] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
+  const [ocrOpen, setOcrOpen]   = useState(false);
 
   // Auto-populate customer name from cart lines: if exactly one distinct patron
   // name exists across comp lines (a single person bought all the comps),
@@ -415,8 +417,15 @@ export function CartPage() {
                 {isExternal && (
                   <div className="mt-3 bg-slate-900 border border-slate-700 rounded-lg p-3 space-y-3">
                     <div className="text-xs text-slate-400">
-                      Charge on Heartland first, then enter the receipt details below and tap Record.
+                      Charge on Heartland first, then record the details below.
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setOcrOpen(true)}
+                      className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2.5 rounded-lg text-sm"
+                    >
+                      📸 Scan receipt / screenshot
+                    </button>
                     <label className="block">
                       <div className="text-xs font-semibold text-slate-300 mb-1">Customer name</div>
                       <input
@@ -529,6 +538,15 @@ export function CartPage() {
             if (ph.email) setCEmail(ph.email);
             applyCustomerNameToCompLines(ph.name, { passholderId: ph.id, email: ph.email });
             setScanOpen(false);
+          }}
+        />
+      )}
+      {ocrOpen && (
+        <ScreenshotOCR
+          onClose={() => setOcrOpen(false)}
+          onExtracted={(extractedName, extractedRef) => {
+            if (extractedName) setCName(extractedName);
+            if (extractedRef)  setExternalRef(extractedRef);
           }}
         />
       )}
