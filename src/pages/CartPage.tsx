@@ -310,12 +310,21 @@ export function CartPage() {
 
       {/* ── Heartland shortcut — always visible ── */}
       {!pasteOpen ? (
-        <button
-          onClick={() => { setPasteOpen(true); setPasteText(''); }}
-          className="w-full mb-4 bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold py-4 rounded-xl text-base"
-        >
-          ⚡ Scan Heartland receipt
-        </button>
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => { window.location.href = 'shortcuts://run-shortcut?name=HFFNY%20Receipt'; }}
+            className="flex-[2] bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold py-4 rounded-xl text-base"
+          >
+            ⚡ Scan Heartland receipt
+          </button>
+          <button
+            onClick={() => { setPasteOpen(true); setPasteText(''); }}
+            className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-4 rounded-xl text-sm"
+            title="Paste receipt text manually"
+          >
+            Paste
+          </button>
+        </div>
       ) : (
         <div className="mb-4 bg-slate-800 border border-indigo-700 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
