@@ -109,7 +109,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
                   onCheckedIn?.(screening.id);
                   await recordManualCheckin(screening.id, user.name).catch(() => {});
                 }}
-                className="text-orange-400 hover:text-orange-300 bg-orange-900/40 hover:bg-orange-900/70 rounded px-2 py-1 text-sm font-bold leading-none"
+                className="text-orange-400 hover:text-orange-300 bg-orange-900/40 hover:bg-orange-900/70 rounded px-5 py-2 text-base font-bold leading-none"
                 title="Manual check-in +1"
               >+</button>
             </div>
