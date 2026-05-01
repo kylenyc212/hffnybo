@@ -18,7 +18,7 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
   const [rawText, setRawText]     = useState('');
   const [name, setName]           = useState('');
   const [ref, setRef]             = useState('');
-  const [parsedReceipt, setParsedReceipt] = useState<ParsedHeartlandReceipt | null>(null);
+  const [parsedReceipt, setParsedReceipt] = useState<(ParsedHeartlandReceipt & { _rawText?: string }) | null>(null);
 
   async function pasteFromClipboard() {
     setPhase('capturing');
@@ -112,12 +112,10 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
       await worker.terminate();
       setRawText(text);
 
-      // Try to parse as a Heartland receipt first
+      // Try to parse as a Heartland receipt; always set so the modal can show
+      // the raw OCR text for debugging even when items aren't detected.
       const receipt = parseHeartlandReceipt(text);
-      if (receipt.items.length > 0) {
-        // Looks like a real receipt — show the full cart import modal
-        setParsedReceipt(receipt);
-      }
+      setParsedReceipt({ ...receipt, _rawText: text });
 
       // Also extract name + ref as fallback
       const extractedName = extractName(text);
@@ -248,19 +246,18 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
               <img src={imgUrl} alt="Captured" className="w-full rounded-xl border border-slate-600 max-h-40 object-contain bg-black" />
             )}
 
-            {/* If we found a real Heartland receipt, show the cart import option */}
+            {/* Heartland receipt modal auto-opens; show status + scan-again button */}
             {parsedReceipt ? (
               <div className="space-y-3">
-                <div className="bg-emerald-900/40 border border-emerald-700 rounded-xl p-3 text-sm text-emerald-200">
-                  ✓ Heartland receipt detected — {parsedReceipt.items.length} item{parsedReceipt.items.length !== 1 ? 's' : ''} found
-                </div>
-                <button
-                  onClick={() => {/* HeartlandReceiptModal shows below */}}
-                  className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl text-lg"
-                  // The modal is always shown when parsedReceipt is set
-                >
-                  Import items to cart →
-                </button>
+                {parsedReceipt.items.length > 0 ? (
+                  <div className="bg-emerald-900/40 border border-emerald-700 rounded-xl p-3 text-sm text-emerald-200">
+                    ✓ Heartland receipt — {parsedReceipt.items.length} item{parsedReceipt.items.length !== 1 ? 's' : ''} found
+                  </div>
+                ) : (
+                  <div className="bg-amber-900/40 border border-amber-700 rounded-xl p-3 text-sm text-amber-200">
+                    ⚠ No items detected — see raw OCR text in the panel below
+                  </div>
+                )}
                 <button onClick={() => setPhase('idle')} className="w-full text-slate-400 hover:text-white text-sm py-2">
                   ← Scan again
                 </button>

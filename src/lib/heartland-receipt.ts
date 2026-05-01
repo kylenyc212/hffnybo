@@ -22,18 +22,44 @@ export interface ParsedHeartlandReceipt {
 }
 
 // ── Parser ──────────────────────────────────────────────────────────────────
+//
+// Heartland receipts are printed in two columns. OCR (Tesseract) reads the
+// columns separately, producing text like:
+//
+//   CIRCE 5/2 1PM SS (x1)   ← left col: item name
+//   CIRCE 5/2 1PM GA (x1)   ← left col: item name
+//   5/1/26, 12:49 PM         ← right col: date
+//   1005959380               ← right col: receipt number
+//   560640                   ← right col: invoice number
+//   $12.00                   ← right col: price for item 1
+//   $16.00                   ← right col: price for item 2
+//   Totals
+//   ...
+//   $28.00                   ← grand total
+//   American Express
+//   Card ending in 1008
+//
+// Strategy 1 handles single-column / same-line format (fallback for future).
+// Strategy 2 handles the two-column layout described above.
 
 export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
-  const receiptNumber = text.match(/Receipt\s+Number\s+(\S+)/i)?.[1] ?? '';
-  const invoiceNumber = text.match(/Invoice\s+Number\s+(\S+)/i)?.[1] ?? '';
-  const cardBrand     = text.match(/Card\s+Brand\s+(.+)/i)?.[1]?.trim() ?? '';
-  const cardLast4     = text.match(/Card\s+ending\s+in\s+(\d+)/i)?.[1] ?? '';
+  // ── Card info ─────────────────────────────────────────────────────────────
+  let cardBrand = text.match(/Card\s+Brand\s+(.+)/i)?.[1]?.trim() ?? '';
+  if (!cardBrand) {
+    const brandMatch = text.match(
+      /\b(American Express|Mastercard|Visa|Discover|Amex|JCB|Diners Club)\b/i
+    );
+    cardBrand = brandMatch?.[1]?.trim() ?? '';
+  }
+  const cardLast4 = text.match(/Card\s+ending\s+in\s+(\d+)/i)?.[1] ?? '';
 
-  // Items: "ITEM NAME (x1)  $12.00"
+  // ── Items ─────────────────────────────────────────────────────────────────
   const items: HeartlandLineItem[] = [];
-  const itemRe = /^(.+?)\s+\(x(\d+)\)\s+\$(\d+\.\d{2})/gm;
+
+  // Strategy 1: same-line format  "ITEM NAME (x1)  $12.00"
+  const sameLine = /^(.+?)\s+\(x(\d+)\)\s+\$(\d+\.\d{2})/gm;
   let m: RegExpExecArray | null;
-  while ((m = itemRe.exec(text)) !== null) {
+  while ((m = sameLine.exec(text)) !== null) {
     items.push({
       rawName: m[1].trim(),
       qty: parseInt(m[2], 10),
@@ -41,7 +67,60 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
     });
   }
 
-  // Use the last "Total" line (avoids matching "Subtotal")
+  // Strategy 2: two-column layout — names and prices on separate lines
+  if (items.length === 0) {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+
+    // Collect all "ITEM NAME (xN)" lines
+    const nameRe = /^(.+?)\s+\(x(\d+)\)\s*$/;
+    const itemLines: { idx: number; name: string; qty: number }[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const lm = nameRe.exec(lines[i]);
+      if (lm) itemLines.push({ idx: i, name: lm[1].trim(), qty: parseInt(lm[2], 10) });
+    }
+
+    if (itemLines.length > 0) {
+      const lastItemIdx = itemLines[itemLines.length - 1].idx;
+
+      // Find the "Totals" / "Subtotal" boundary after the last item line
+      const boundaryIdx = lines.findIndex(
+        (l, i) => i > lastItemIdx && /^(totals?|subtotal)\b/i.test(l)
+      );
+      const searchEnd = boundaryIdx !== -1 ? boundaryIdx : lines.length;
+
+      // Collect bare "$XX.XX" price lines between last item and the boundary
+      const priceRe = /^\$(\d+\.\d{2})$/;
+      const prices: number[] = [];
+      for (let i = lastItemIdx + 1; i < searchEnd; i++) {
+        const pm = priceRe.exec(lines[i]);
+        if (pm) prices.push(Math.round(parseFloat(pm[1]) * 100));
+      }
+
+      // Match names → prices positionally (item 1 gets first price, etc.)
+      for (let i = 0; i < itemLines.length; i++) {
+        const il = itemLines[i];
+        const lineTotalCents = prices[i] ?? 0;
+        const unitPriceCents = il.qty > 1 ? Math.round(lineTotalCents / il.qty) : lineTotalCents;
+        items.push({ rawName: il.name, qty: il.qty, unitPriceCents });
+      }
+    }
+  }
+
+  // ── Receipt / Invoice numbers ─────────────────────────────────────────────
+  // Try labeled format first; fall back to bare digit strings (two-column layout)
+  let receiptNumber = text.match(/Receipt\s+Number\s+(\S+)/i)?.[1] ?? '';
+  let invoiceNumber = text.match(/Invoice\s+Number\s+(\S+)/i)?.[1] ?? '';
+
+  if (!receiptNumber) {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    // Bare standalone digit strings ≥ 5 digits (not a price line)
+    const bareNums = lines.filter((l) => /^\d{5,}$/.test(l));
+    if (bareNums.length >= 1) receiptNumber = bareNums[0];
+    if (bareNums.length >= 2 && !invoiceNumber) invoiceNumber = bareNums[1];
+  }
+
+  // ── Total ─────────────────────────────────────────────────────────────────
+  // Use the last "Total $XX.XX" line; fall back to summing item prices
   const totalMatches = [...text.matchAll(/^Total\s+\$(\d+\.\d{2})/gim)];
   const totalCents = totalMatches.length
     ? Math.round(parseFloat(totalMatches[totalMatches.length - 1][1]) * 100)
