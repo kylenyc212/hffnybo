@@ -18,6 +18,8 @@ import { VoidModal } from '../components/VoidModal';
 import { HardDeleteModal } from '../components/HardDeleteModal';
 import { getCheckinLinesForOrder, deleteOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 import { fmtTime } from '../lib/datetime';
+import { sendReceiptEmail } from '../lib/email';
+import { supabase } from '../lib/supabase';
 
 type ActionTarget =
   | { mode: 'order'; id: string; amountCents: number; description?: string }
@@ -256,6 +258,51 @@ function OpenDrawerView({
   const [expandedLines, setExpandedLines] = useState<OrderLineWithScreening[]>([]);
   const [linesLoading, setLinesLoading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Email receipt state: { orderId, emailInput, sending, result }
+  const [emailFor, setEmailFor] = useState<string | null>(null); // orderId
+  const [emailInput, setEmailInput] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailResult, setEmailResult] = useState<Record<string, 'sent' | 'error'>>({});
+
+  async function sendReceipt(event: EnrichedEvent, toEmail: string) {
+    if (!toEmail.includes('@') || emailSending) return;
+    setEmailSending(true);
+    try {
+      // Fetch order lines to build the receipt
+      const { data: lines } = await supabase
+        .from('order_lines')
+        .select('label, qty, unit_price_cents, screening_id')
+        .eq('order_id', event.order_id!);
+
+      // Fetch screening titles
+      const scIds = Array.from(new Set((lines ?? []).map((l: { screening_id: string }) => l.screening_id)));
+      const { data: screenings } = scIds.length
+        ? await supabase.from('screenings').select('id, title').in('id', scIds)
+        : { data: [] };
+      const scMap = new Map((screenings ?? []).map((s: { id: string; title: string }) => [s.id, s.title]));
+
+      await sendReceiptEmail({
+        to: toEmail,
+        orderRef: event.order_external_ref ?? null,
+        cashierName: event.order_cashier ?? event.who,
+        items: (lines ?? []).map((l: { label: string; qty: number; unit_price_cents: number; screening_id: string }) => ({
+          label: l.label,
+          screeningTitle: scMap.get(l.screening_id) ?? l.label,
+          qty: l.qty,
+          unitPriceCents: l.unit_price_cents,
+        })),
+        totalCents: event.amount_cents,
+        payMethod: event.order_source === 'external_heartland' ? 'external' : 'cash',
+      });
+      setEmailResult((prev) => ({ ...prev, [event.order_id!]: 'sent' }));
+      setEmailFor(null);
+    } catch {
+      setEmailResult((prev) => ({ ...prev, [event.order_id!]: 'error' }));
+    } finally {
+      setEmailSending(false);
+    }
+  }
 
   async function toggleOrderExpand(orderId: string) {
     if (expandedOrderId === orderId) {
@@ -589,6 +636,23 @@ function OpenDrawerView({
                           {isExpanded ? '▾ Tickets' : '▸ Tickets'}
                         </button>
                       )}
+                      {canExpand && !isVoided && (
+                        emailResult[e.order_id!] === 'sent' ? (
+                          <span className="text-xs text-emerald-400 px-2 py-1">✓ Sent</span>
+                        ) : emailResult[e.order_id!] === 'error' ? (
+                          <span className="text-xs text-red-400 px-2 py-1">Failed</span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEmailFor(e.order_id!);
+                              setEmailInput(e.order_customer_email ?? '');
+                            }}
+                            className="text-xs bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded"
+                          >
+                            📧
+                          </button>
+                        )
+                      )}
                       {canVoidSale && (
                         <button
                           onClick={() =>
@@ -645,6 +709,34 @@ function OpenDrawerView({
                       )}
                     </div>
                   </div>
+
+                  {/* Inline email input */}
+                  {canExpand && emailFor === e.order_id && (
+                    <div className="mt-2 flex gap-2 items-center">
+                      <input
+                        autoFocus
+                        type="email"
+                        inputMode="email"
+                        autoCapitalize="off"
+                        className="flex-1 bg-slate-900 border border-indigo-600 rounded-lg px-3 py-1.5 text-sm"
+                        placeholder="customer@email.com"
+                        value={emailInput}
+                        onChange={(e2) => setEmailInput(e2.target.value)}
+                        onKeyDown={(e2) => { if (e2.key === 'Enter') sendReceipt(e, emailInput); }}
+                      />
+                      <button
+                        disabled={emailSending || !emailInput.includes('@')}
+                        onClick={() => sendReceipt(e, emailInput)}
+                        className="bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                      >
+                        {emailSending ? '…' : 'Send'}
+                      </button>
+                      <button
+                        onClick={() => setEmailFor(null)}
+                        className="text-slate-500 hover:text-white text-sm px-2"
+                      >✕</button>
+                    </div>
+                  )}
 
                   {/* Expanded ticket lines */}
                   {canExpand && isExpanded && (

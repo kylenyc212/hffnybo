@@ -165,6 +165,10 @@ export interface EnrichedEvent extends CashEventRow {
   order_voided?: boolean;
   order_device?: string;
   order_cashier?: string;
+  order_customer_email?: string | null;
+  order_customer_name?: string | null;
+  order_external_ref?: string | null;
+  order_source?: string | null;
 }
 
 export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEvent[]> {
@@ -173,10 +177,11 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
   if (orderIds.length === 0) return events;
   const { data, error } = await supabase
     .from('orders')
-    .select('id, voided_at, device_label, cashier_name')
+    .select('id, voided_at, device_label, cashier_name, customer_email, customer_name, external_ref, source')
     .in('id', orderIds);
   if (error) return events;
-  const map = new Map((data ?? []).map((o) => [o.id as string, o as { id: string; voided_at: string | null; device_label: string; cashier_name: string }]));
+  type OrderRow = { id: string; voided_at: string | null; device_label: string; cashier_name: string; customer_email: string | null; customer_name: string | null; external_ref: string | null; source: string | null };
+  const map = new Map((data ?? []).map((o) => [o.id as string, o as OrderRow]));
   return events.map((e) => {
     if (!e.order_id) return e;
     const o = map.get(e.order_id);
@@ -185,7 +190,11 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
       ...e,
       order_voided: !!o.voided_at,
       order_device: o.device_label,
-      order_cashier: o.cashier_name
+      order_cashier: o.cashier_name,
+      order_customer_email: o.customer_email,
+      order_customer_name: o.customer_name,
+      order_external_ref: o.external_ref,
+      order_source: o.source,
     };
   });
 }
