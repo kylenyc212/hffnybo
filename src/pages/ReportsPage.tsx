@@ -154,6 +154,15 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
         `  ${'TOTAL'.padEnd(30)}     ${m(s.totalCents)}`,
       ]),
     ];
+    if (report.ccOrders.length > 0) {
+      lines.push('', `── CC / HEARTLAND (${report.ccOrders.length} orders · ${m(report.ccTotalCents)}) ──`);
+      for (const o of report.ccOrders) {
+        const t = new Date(o.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+        const name = o.customer_name ? o.customer_name.padEnd(25) : '(no name)'.padEnd(25);
+        const ref  = o.external_ref  ? `Ref: ${o.external_ref}` : '';
+        lines.push(`  ${t}  ${name}  ${m(o.subtotal_cents)}  ${ref}`);
+      }
+    }
     if (report.removalsList.length > 0) {
       lines.push('', '── REMOVALS ──');
       for (const r of report.removalsList) {
@@ -292,6 +301,37 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
           </div>
         )}
       </div>
+
+      {report.ccOrders.length > 0 && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-lg font-semibold">💳 CC / Heartland</div>
+            <div className="text-emerald-400 font-bold tabular-nums">{money(report.ccTotalCents)}</div>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="text-xs text-slate-500">
+              <tr>
+                <th className="text-left font-normal py-1">Time</th>
+                <th className="text-left font-normal py-1">Customer</th>
+                <th className="text-left font-normal py-1">Ref #</th>
+                <th className="text-right font-normal py-1">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.ccOrders.map((o) => (
+                <tr key={o.id} className="border-t border-slate-700">
+                  <td className="py-1.5 text-slate-400 whitespace-nowrap pr-3">
+                    {new Date(o.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })}
+                  </td>
+                  <td className="py-1.5 pr-3">{o.customer_name ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="py-1.5 font-mono text-xs text-slate-400 pr-3">{o.external_ref ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="py-1.5 text-right tabular-nums font-semibold">{money(o.subtotal_cents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <div className="text-lg font-semibold mb-3">Per-screening</div>

@@ -26,7 +26,7 @@ export function CartPage() {
   const [tenderStr, setTenderStr] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string } | null>(null);
+  const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string; ref: string | null; name: string | null } | null>(null);
   const [checkoutLines, setCheckoutLines] = useState<OrderLineWithScreening[] | null>(null);
   const [checkingIn, setCheckingIn] = useState<Set<string>>(new Set());
   const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
@@ -113,6 +113,8 @@ export function CartPage() {
         synced: result.synced,
         external: isExternal,
         orderId: result.orderId,
+        ref: isExternal ? (externalRef.trim() || null) : null,
+        name: cName.trim() || null,
       });
       // Load order_lines for post-checkout check-in (only works when synced)
       if (result.synced) {
@@ -147,6 +149,12 @@ export function CartPage() {
           )}
           {lastSale.external && (
             <div className="mt-2 text-xs text-slate-400">Heartland sale logged. Cash drawer was not touched.</div>
+          )}
+          {lastSale.name && (
+            <div className="mt-2 text-slate-200 font-semibold">{lastSale.name}</div>
+          )}
+          {lastSale.ref && (
+            <div className="mt-1 font-mono text-sm text-slate-400">Ref: {lastSale.ref}</div>
           )}
           <div className="mt-3 text-slate-300">Total: {money(lastSale.subtotalCents)}</div>
           {lastSale.changeCents > 0 && !lastSale.external && (
@@ -405,17 +413,30 @@ export function CartPage() {
                   </button>
                 </div>
                 {isExternal && (
-                  <div className="mt-3 bg-slate-900 border border-slate-700 rounded-lg p-3">
-                    <div className="text-xs text-slate-400 mb-1">
-                      Charge the customer on your Heartland terminal, then record the sale here. Skips the cash drawer.
+                  <div className="mt-3 bg-slate-900 border border-slate-700 rounded-lg p-3 space-y-3">
+                    <div className="text-xs text-slate-400">
+                      Charge on Heartland first, then enter the receipt details below and tap Record.
                     </div>
                     <label className="block">
-                      <div className="text-xs text-slate-400 mb-1">Heartland receipt # / reference (optional)</div>
+                      <div className="text-xs font-semibold text-slate-300 mb-1">Customer name</div>
                       <input
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
+                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                        placeholder="As it appears on Heartland receipt"
+                        value={cName}
+                        onChange={(e) => setCName(e.target.value)}
+                        onBlur={(e) => applyCustomerNameToCompLines(e.target.value)}
+                        autoCapitalize="words"
+                      />
+                    </label>
+                    <label className="block">
+                      <div className="text-xs font-semibold text-slate-300 mb-1">Heartland order / receipt #</div>
+                      <input
+                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono"
                         placeholder="e.g. 123456"
                         value={externalRef}
                         onChange={(e) => setExternalRef(e.target.value)}
+                        autoCapitalize="off"
+                        autoCorrect="off"
                       />
                     </label>
                   </div>

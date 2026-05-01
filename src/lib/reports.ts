@@ -9,6 +9,15 @@ import type {
 
 // ---------- Drawer report ----------
 
+export interface CCOrder {
+  id: string;
+  created_at: string;
+  cashier_name: string;
+  subtotal_cents: number;
+  external_ref: string | null;
+  customer_name: string | null;
+}
+
 export interface DrawerReport {
   drawer: CashDrawerRow;
   events: CashEventRow[];
@@ -26,6 +35,8 @@ export interface DrawerReport {
   varianceCents: number | null;
   screenings: ScreeningBreakdown[];
   subtotalsByCategory: { paid: number; comp: number; other: number };
+  ccOrders: CCOrder[];
+  ccTotalCents: number;
 }
 
 export interface ScreeningBreakdown {
@@ -54,6 +65,21 @@ export async function loadDrawerReport(drawerId: string): Promise<DrawerReport> 
   if (oErr) throw oErr;
   const orders = (orderData ?? []) as OrderRow[];
 
+  // Pull CC (external_heartland) orders for the same device within the drawer's
+  // open window. They bypass the cash drawer so they aren't linked by drawer_id.
+  const shiftEnd = drawer.closed_at ?? new Date().toISOString();
+  const { data: ccData } = await supabase
+    .from('orders')
+    .select('id, created_at, cashier_name, subtotal_cents, external_ref, customer_name')
+    .eq('source', 'external_heartland')
+    .eq('device_label', drawer.device_label)
+    .gte('created_at', drawer.opened_at)
+    .lte('created_at', shiftEnd)
+    .is('voided_at', null)
+    .order('created_at', { ascending: true });
+  // Ignore errors — CC orders are best-effort; cash report still works without them
+  const ccOrders = (ccData ?? []) as CCOrder[];
+
   const orderIds = orders.map((o) => o.id);
   let lines: OrderLineRow[] = [];
   if (orderIds.length > 0) {
@@ -72,14 +98,15 @@ export async function loadDrawerReport(drawerId: string): Promise<DrawerReport> 
     screenings = (sData ?? []) as ScreeningRow[];
   }
 
-  return buildReport(drawer, events, lines, screenings);
+  return buildReport(drawer, events, lines, screenings, ccOrders);
 }
 
 function buildReport(
   drawer: CashDrawerRow,
   events: CashEventRow[],
   lines: OrderLineRow[],
-  screenings: ScreeningRow[]
+  screenings: ScreeningRow[],
+  ccOrders: CCOrder[] = []
 ): DrawerReport {
   // Voided cash events (add / removal / adjustment) are excluded from the
   // expected-cash math but still appear in the activity feed (struck-through).
@@ -131,6 +158,8 @@ function buildReport(
     a.starts_at.localeCompare(b.starts_at)
   );
 
+  const ccTotalCents = ccOrders.reduce((s, o) => s + o.subtotal_cents, 0);
+
   return {
     drawer,
     events,
@@ -147,7 +176,9 @@ function buildReport(
     countedCents: drawer.counted_cents,
     varianceCents: drawer.counted_cents !== null ? drawer.counted_cents - expectedCents : null,
     screenings: sortedScreenings,
-    subtotalsByCategory: subs
+    subtotalsByCategory: subs,
+    ccOrders,
+    ccTotalCents,
   };
 }
 
