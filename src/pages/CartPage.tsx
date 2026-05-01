@@ -443,10 +443,21 @@ export function CartPage() {
                     </div>
                     <button
                       type="button"
+                      onClick={() => {
+                        // Run the iOS Shortcut — it will screenshot, OCR,
+                        // and reopen this app at /cart?hr=receipt_text
+                        window.location.href = 'shortcuts://run-shortcut?name=HFFNY%20Receipt';
+                      }}
+                      className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-lg"
+                    >
+                      ⚡ Scan with Shortcut
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setOcrOpen(true)}
                       className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2.5 rounded-lg text-sm"
                     >
-                      📸 Scan receipt / screenshot
+                      📸 Paste / import screenshot
                     </button>
                     <label className="block">
                       <div className="text-xs font-semibold text-slate-300 mb-1">Customer name</div>
