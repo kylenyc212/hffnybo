@@ -90,18 +90,14 @@ Deno.serve(async (req) => {
     ].filter(Boolean).join('\n');
 
     // ── Item rows HTML ────────────────────────────────────────────────────────
-    const rowsHtml = (items as Item[]).map((i) => `
-      <tr>
-        <td style="padding:9px 0;border-bottom:1px solid #f0f0f0;">
-          <div style="font-weight:700;color:#111;font-size:14px;line-height:1.3;">${i.screeningTitle}</div>
-          <div style="color:#888;font-size:12px;margin-top:2px;">${i.label}&nbsp;&times;&nbsp;${i.qty}</div>
-        </td>
-        <td style="padding:9px 0;border-bottom:1px solid #f0f0f0;text-align:right;
-                   font-weight:700;color:#111;font-size:14px;vertical-align:top;white-space:nowrap;">
-          ${fmt(i.qty * i.unitPriceCents)}
-        </td>
-      </tr>`
-    ).join('');
+    // Note: apply thick bottom border to last row only; no separate border row
+    // (avoids quoted-printable =20 artifacts from blank cells).
+    const itemArr = items as Item[];
+    const rowsHtml = itemArr.map((i, idx) => {
+      const isLast = idx === itemArr.length - 1;
+      const border = isLast ? '2px solid #111' : '1px solid #f0f0f0';
+      return `<tr><td style="padding:9px 0;border-bottom:${border};"><div style="font-weight:700;color:#111;font-size:14px;line-height:1.3;">${i.screeningTitle}</div><div style="color:#888;font-size:12px;margin-top:2px;">${i.label} &times; ${i.qty}</div></td><td style="padding:9px 0;border-bottom:${border};text-align:right;font-weight:700;color:#111;font-size:14px;vertical-align:top;white-space:nowrap;">${fmt(i.qty * i.unitPriceCents)}</td></tr>`;
+    }).join('');
 
     const payPillStyle = payMethod === 'external'
       ? 'background:#1a1a1a;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:600;color:#F6C000;'
@@ -175,10 +171,6 @@ Deno.serve(async (req) => {
     <td style="background:#fff;padding:20px 28px 0;">
       <table width="100%" cellpadding="0" cellspacing="0">
         ${rowsHtml}
-        <!-- Last item border override -->
-        <tr>
-          <td colspan="2" style="padding:0;border-bottom:2px solid #111;font-size:0;">&nbsp;</td>
-        </tr>
         <!-- Total -->
         <tr>
           <td style="padding:14px 0 6px;">
