@@ -304,15 +304,14 @@ export function ScreenshotOCR({ onExtracted, onClose }: Props) {
         )}
       </div>
 
-      {/* Full receipt import modal — shown on top when a receipt is parsed */}
+      {/* Full receipt modal — handles checkout directly; closes OCR on dismiss */}
       {parsedReceipt && phase === 'done' && (
         <HeartlandReceiptModal
           receipt={parsedReceipt}
-          onConfirm={(receiptRef) => {
-            onExtracted('', receiptRef); // set the ref # in CartPage
-            onClose();
+          onClose={() => {
+            setParsedReceipt(null);
+            onClose(); // also close the OCR scanner
           }}
-          onClose={() => setParsedReceipt(null)}
         />
       )}
     </div>

@@ -3,19 +3,30 @@ import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { matchReceiptItems, matchedItemsToCartLines } from '../lib/heartland-receipt';
 import type { ParsedHeartlandReceipt, MatchedItem } from '../lib/heartland-receipt';
-import { useCart } from '../lib/cart';
+import { checkout } from '../lib/checkout';
+import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
+import type { OrderLineWithScreening } from '../lib/checkins';
+import { useSession } from '../lib/session';
 
 interface Props {
   receipt: ParsedHeartlandReceipt & { _rawText?: string };
-  onConfirm: (receiptNumber: string) => void; // caller switches to CC mode + sets ref
+  /** Called on both Cancel and Done — caller just closes the modal */
   onClose: () => void;
 }
 
-export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
-  const addLine = useCart((s) => s.addLine);
-  const [matched, setMatched] = useState<MatchedItem[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr]         = useState<string | null>(null);
+export function HeartlandReceiptModal({ receipt, onClose }: Props) {
+  const { user, deviceLabel } = useSession();
+  const [matched, setMatched]     = useState<MatchedItem[] | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [err, setErr]             = useState<string | null>(null);
+  const [cName, setCName]         = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess]     = useState<{
+    totalCents: number;
+    synced: boolean;
+  } | null>(null);
+  const [checkinLines, setCheckinLines]   = useState<OrderLineWithScreening[]>([]);
+  const [checkingIn, setCheckingIn]       = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -25,16 +36,126 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [receipt]);
 
-  function confirm() {
-    if (!matched) return;
-    const lines = matchedItemsToCartLines(matched);
-    for (const line of lines) addLine(line);
-    onConfirm(receipt.receiptNumber || receipt.invoiceNumber);
-    onClose();
+  async function confirm() {
+    if (!matched || !user || !deviceLabel) return;
+    setSubmitting(true);
+    setErr(null);
+    try {
+      const baseLines = matchedItemsToCartLines(matched);
+      if (baseLines.length === 0) throw new Error('No items to record');
+      const lines = baseLines.map((l, i) => ({ ...l, key: `hl-${i}` }));
+
+      const result = await checkout({
+        lines,
+        cashierId: user.id,
+        cashierName: user.name,
+        deviceLabel,
+        drawerId: null,            // Heartland CC never touches the cash drawer
+        cashTenderedCents: 0,
+        source: 'external_heartland',
+        externalRef: receipt.receiptNumber || receipt.invoiceNumber || null,
+        customerName: cName.trim() || null,
+      });
+
+      setSuccess({ totalCents: result.subtotalCents, synced: result.synced });
+
+      // Auto-check in all lines so the cashier doesn't have to tap again
+      if (result.synced) {
+        setCheckingIn(true);
+        try {
+          const cls = await getCheckinLinesForOrder(result.orderId);
+          await Promise.all(cls.map((l) => checkInOrderLine(l.id, user.name)));
+          const updated = await getCheckinLinesForOrder(result.orderId);
+          setCheckinLines(updated);
+        } catch { /* check-in failure is non-fatal */ }
+        setCheckingIn(false);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Checkout failed');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const unmatched = matched?.filter((m) => !m.matched).length ?? 0;
 
+  // ── Success screen ──────────────────────────────────────────────────────────
+  if (success) {
+    return (
+      <div className="fixed inset-0 bg-black/90 z-50 flex flex-col p-4 overflow-auto">
+        <div className="max-w-lg mx-auto w-full space-y-4">
+
+          <div className={`border rounded-2xl p-6 text-center ${
+            success.synced
+              ? 'bg-emerald-900/40 border-emerald-700'
+              : 'bg-amber-900/40 border-amber-600'
+          }`}>
+            <div className={`text-2xl font-bold ${success.synced ? 'text-emerald-200' : 'text-amber-200'}`}>
+              {success.synced ? '✓ Sale recorded' : 'Saved offline'}
+            </div>
+            {!success.synced && (
+              <div className="mt-2 text-sm text-amber-200">
+                Order queued — will sync when back online.
+              </div>
+            )}
+            {cName && <div className="mt-2 text-slate-200 font-semibold">{cName}</div>}
+            {(receipt.receiptNumber || receipt.invoiceNumber) && (
+              <div className="mt-1 font-mono text-sm text-slate-400">
+                Ref: {receipt.receiptNumber || receipt.invoiceNumber}
+              </div>
+            )}
+            <div className="mt-2 text-slate-300">{money(success.totalCents)}</div>
+            {receipt.cardBrand && (
+              <div className="mt-1 text-xs text-slate-500">
+                {receipt.cardBrand}{receipt.cardLast4 ? ` ···· ${receipt.cardLast4}` : ''}
+              </div>
+            )}
+          </div>
+
+          {/* Check-in status */}
+          {success.synced && (
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              {checkingIn ? (
+                <div className="text-slate-400 text-sm text-center py-2">Checking in…</div>
+              ) : checkinLines.length > 0 ? (
+                <div className="space-y-2">
+                  {checkinLines.map((line) => (
+                    <div key={line.id} className="flex items-center gap-3 text-sm">
+                      <span className="text-emerald-400 text-base">✓</span>
+                      <div className="flex-1 min-w-0">
+                        {line.screenings && (
+                          <div className="text-xs text-slate-400">
+                            {line.screenings.title} · {fmtWhen(line.screenings.starts_at)}
+                          </div>
+                        )}
+                        <div className="font-semibold">
+                          {line.label}{line.qty > 1 ? ` ×${line.qty}` : ''}
+                        </div>
+                      </div>
+                      <span className="text-emerald-400 text-xs font-semibold">Checked in</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-slate-400 text-sm text-center">
+                  Sale recorded — check-in unavailable offline
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={onClose}
+            className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-lg"
+          >
+            Done — next sale
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Review + confirm ────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/90 z-50 flex flex-col p-4 overflow-auto">
       <div className="max-w-lg mx-auto w-full space-y-4">
@@ -71,12 +192,12 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
           </div>
         </div>
 
-        {/* If no items found, show raw OCR text for debugging */}
+        {/* No items — show raw OCR for debugging */}
         {receipt.items.length === 0 && receipt._rawText && (
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-2">
             <div className="text-sm font-semibold text-amber-400">⚠ No items found — raw OCR text:</div>
             <pre className="text-xs text-slate-400 whitespace-pre-wrap max-h-48 overflow-auto">{receipt._rawText}</pre>
-            <div className="text-xs text-slate-500">If you can see the receipt text above, the item format might not match. Share this with the developer.</div>
+            <div className="text-xs text-slate-500">Share this with the developer if the text looks correct.</div>
           </div>
         )}
 
@@ -89,11 +210,8 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
           <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-xl">{err}</div>
         )}
 
-        {matched && (
+        {matched && matched.length > 0 && (
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-              Will add to cart:
-            </div>
             {matched.map((m, i) => (
               <div
                 key={i}
@@ -117,7 +235,7 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
                     )}
                     {!m.matched && (
                       <div className="text-xs text-amber-400 mt-0.5">
-                        No matching screening found — will record as-is
+                        No matching screening — will record with Heartland name
                       </div>
                     )}
                   </div>
@@ -133,9 +251,25 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
 
             {unmatched > 0 && (
               <div className="text-xs text-amber-400 px-1">
-                {unmatched} item{unmatched > 1 ? 's' : ''} couldn't be matched to a screening — they'll be added with the Heartland name. You can set up Heartland SKUs in Admin → Ticket Types to fix this.
+                {unmatched} item{unmatched > 1 ? 's' : ''} couldn't be matched — set up Heartland SKUs in Admin → Ticket Types.
               </div>
             )}
+          </div>
+        )}
+
+        {/* Optional customer name */}
+        {matched && matched.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-slate-300 mb-1">
+              Customer name <span className="font-normal text-slate-500">(optional)</span>
+            </div>
+            <input
+              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+              placeholder="As shown on Heartland receipt"
+              value={cName}
+              onChange={(e) => setCName(e.target.value)}
+              autoCapitalize="words"
+            />
           </div>
         )}
 
@@ -149,10 +283,11 @@ export function HeartlandReceiptModal({ receipt, onConfirm, onClose }: Props) {
               Cancel
             </button>
             <button
+              disabled={submitting || matched.length === 0}
               onClick={confirm}
-              className="flex-[2] bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl"
+              className="flex-[2] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-bold py-3 rounded-xl"
             >
-              Add to cart ✓
+              {submitting ? 'Recording…' : 'Confirm & Check In ✓'}
             </button>
           </div>
         )}

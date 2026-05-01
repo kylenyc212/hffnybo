@@ -9,7 +9,6 @@ import { checkout } from '../lib/checkout';
 import type { CashDrawerRow } from '../lib/database.types';
 import { InputPromptModal } from '../components/InputPromptModal';
 import { PassScanner } from '../components/PassScanner';
-import { ScreenshotOCR } from '../components/ScreenshotOCR';
 import { HeartlandReceiptModal } from '../components/HeartlandReceiptModal';
 import { parseHeartlandReceipt } from '../lib/heartland-receipt';
 import type { ParsedHeartlandReceipt } from '../lib/heartland-receipt';
@@ -43,9 +42,8 @@ export function CartPage() {
   const [cEmail, setCEmail] = useState('');
   const [cPhone, setCPhone] = useState('');
   const [cAddress, setCAddress] = useState('');
-  const [scanOpen, setScanOpen]           = useState(false);
-  const [ocrOpen, setOcrOpen]             = useState(false);
-  const [pasteOpen, setPasteOpen]         = useState(false);
+  const [scanOpen, setScanOpen]   = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText]         = useState('');
   const [shortcutReceipt, setShortcutReceipt] = useState<ParsedHeartlandReceipt | null>(null);
 
@@ -490,13 +488,6 @@ export function CartPage() {
                     <div className="text-xs text-slate-400">
                       Charge on Heartland first, then record the details below.
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setOcrOpen(true)}
-                      className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2.5 rounded-lg text-sm"
-                    >
-                      📸 Paste / import screenshot
-                    </button>
                     <label className="block">
                       <div className="text-xs font-semibold text-slate-300 mb-1">Customer name</div>
                       <input
@@ -612,21 +603,10 @@ export function CartPage() {
           }}
         />
       )}
-      {ocrOpen && (
-        <ScreenshotOCR
-          onClose={() => setOcrOpen(false)}
-          onExtracted={(extractedName, extractedRef) => {
-            if (extractedName) setCName(extractedName);
-            if (extractedRef)  setExternalRef(extractedRef);
-          }}
-        />
-      )}
-
-      {/* Auto-shown when Shortcut passes ?hr= receipt text via URL */}
+      {/* Auto-shown when receipt text is pasted — modal handles full checkout */}
       {shortcutReceipt && (
         <HeartlandReceiptModal
           receipt={shortcutReceipt}
-          onConfirm={(ref) => { setExternalRef(ref); setPayMethod('external'); }}
           onClose={() => setShortcutReceipt(null)}
         />
       )}
