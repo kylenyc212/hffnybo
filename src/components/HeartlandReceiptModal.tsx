@@ -13,7 +13,7 @@ import type {
   SRow,
 } from '../lib/heartland-receipt';
 import { checkout } from '../lib/checkout';
-import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
+import { getCheckinLinesForOrder, checkInOne, uncheckInOne } from '../lib/checkins';
 import type { OrderLineWithScreening } from '../lib/checkins';
 import { sendReceiptEmail } from '../lib/email';
 import { useSession } from '../lib/session';
@@ -39,7 +39,8 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
     finalMatched: MatchedItem[];
   } | null>(null);
   const [checkinLines, setCheckinLines]   = useState<OrderLineWithScreening[]>([]);
-  const [checkingIn, setCheckingIn]       = useState(false);
+  const [checkedInQty, setCheckedInQty]   = useState<Record<string, number>>({});
+  const [checkingIn, setCheckingIn]       = useState<Set<string>>(new Set());
   const [emailSending, setEmailSending]   = useState(false);
   const [emailSent, setEmailSent]         = useState(false);
   const [emailErr, setEmailErr]           = useState<string | null>(null);
@@ -117,16 +118,15 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
         finalMatched,
       });
 
-      // Auto-check in all lines so the cashier doesn't have to tap again
+      // Load lines so cashier can check in ticket by ticket
       if (result.synced) {
-        setCheckingIn(true);
         try {
           const cls = await getCheckinLinesForOrder(result.orderId);
-          await Promise.all(cls.map((l) => checkInOrderLine(l.id, user.name)));
-          const updated = await getCheckinLinesForOrder(result.orderId);
-          setCheckinLines(updated);
-        } catch { /* check-in failure is non-fatal */ }
-        setCheckingIn(false);
+          setCheckinLines(cls);
+          const init: Record<string, number> = {};
+          for (const l of cls) init[l.id] = l.checked_in_qty ?? 0;
+          setCheckedInQty(init);
+        } catch { /* non-fatal */ }
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Checkout failed');
@@ -204,35 +204,75 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
             )}
           </div>
 
-          {/* Check-in status */}
-          {success.synced && (
+          {/* Per-ticket check-in */}
+          {success.synced && checkinLines.length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-              {checkingIn ? (
-                <div className="text-slate-400 text-sm text-center py-2">Checking in…</div>
-              ) : checkinLines.length > 0 ? (
-                <div className="space-y-2">
-                  {checkinLines.map((line) => (
-                    <div key={line.id} className="flex items-center gap-3 text-sm">
-                      <span className="text-emerald-400 text-base">✓</span>
+              <div className="text-sm font-semibold mb-3 text-slate-200">Check in at door</div>
+              <div className="space-y-2">
+                {checkinLines.map((line) => {
+                  const total = line.qty;
+                  const inQty = checkedInQty[line.id] ?? 0;
+                  const full = inQty >= total;
+                  const busy = checkingIn.has(line.id);
+                  return (
+                    <div key={line.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 border ${full ? 'bg-emerald-950/40 border-emerald-800' : inQty > 0 ? 'bg-amber-950/30 border-amber-700' : 'bg-slate-900 border-slate-700'}`}>
                       <div className="flex-1 min-w-0">
                         {line.screenings && (
-                          <div className="text-xs text-slate-400">
-                            {line.screenings.title} · {fmtWhen(line.screenings.starts_at)}
+                          <div className="text-xs text-slate-400 mb-0.5">
+                            {line.screenings.title}
+                            {!line.screenings.is_always_available && ` · ${fmtWhen(line.screenings.starts_at)}`}
                           </div>
                         )}
-                        <div className="font-semibold">
-                          {line.label}{line.qty > 1 ? ` ×${line.qty}` : ''}
-                        </div>
+                        <div className="font-semibold text-sm leading-tight">{line.label}</div>
                       </div>
-                      <span className="text-emerald-400 text-xs font-semibold">Checked in</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {full ? (
+                          <span className="text-emerald-400 text-sm font-semibold">
+                            ✓ {total > 1 ? `All ${total} in` : 'In'}
+                          </span>
+                        ) : inQty > 0 ? (
+                          <span className="text-amber-300 text-sm font-semibold tabular-nums">
+                            {inQty}/{total} in
+                          </span>
+                        ) : null}
+                        {inQty > 0 && (
+                          <button
+                            disabled={busy}
+                            onClick={async () => {
+                              setCheckingIn((p) => new Set(p).add(line.id));
+                              try {
+                                await uncheckInOne(line.id, inQty);
+                                setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
+                              } catch { /* ignore */ } finally {
+                                setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                              }
+                            }}
+                            className="w-9 h-9 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold rounded-lg"
+                          >−</button>
+                        )}
+                        {!full && (
+                          <button
+                            disabled={busy}
+                            onClick={async () => {
+                              if (!user) return;
+                              setCheckingIn((p) => new Set(p).add(line.id));
+                              try {
+                                await checkInOne(line.id, user.name, inQty, total);
+                                setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
+                              } catch { /* ignore */ } finally {
+                                setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                              }
+                            }}
+                            className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg whitespace-nowrap"
+                          >
+                            {busy ? '…' : `Check In${total > 1 ? ' +1' : ' ✓'}`}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-slate-400 text-sm text-center">
-                  Sale recorded — check-in unavailable offline
-                </div>
-              )}
+                  );
+                })}
+              </div>
             </div>
           )}
 

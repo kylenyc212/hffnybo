@@ -1,20 +1,50 @@
 import { supabase } from './supabase';
 import type { OrderLineRow } from './database.types';
 
-/** Mark an order_line as checked in at the door. */
+/** Check in one ticket on a line (+1). Sets checked_in_at on the first tap.
+ *  Pass the current checked_in_qty and total qty from the local state to avoid
+ *  an extra round-trip. */
+export async function checkInOne(
+  lineId: string,
+  checkedInBy: string,
+  currentCheckedIn: number,
+  totalQty: number,
+): Promise<void> {
+  if (currentCheckedIn >= totalQty) return; // already fully in
+  const newQty = currentCheckedIn + 1;
+  const patch: Record<string, unknown> = { checked_in_qty: newQty, checked_in_by: checkedInBy };
+  if (currentCheckedIn === 0) patch.checked_in_at = new Date().toISOString(); // first tap
+  const { error } = await supabase.from('order_lines').update(patch).eq('id', lineId);
+  if (error) throw error;
+}
+
+/** Undo one check-in (-1). Clears checked_in_at when count reaches 0. */
+export async function uncheckInOne(lineId: string, currentCheckedIn: number): Promise<void> {
+  if (currentCheckedIn <= 0) return;
+  const newQty = currentCheckedIn - 1;
+  const patch: Record<string, unknown> = { checked_in_qty: newQty };
+  if (newQty === 0) { patch.checked_in_at = null; patch.checked_in_by = null; }
+  const { error } = await supabase.from('order_lines').update(patch).eq('id', lineId);
+  if (error) throw error;
+}
+
+/** @deprecated Use checkInOne — kept for any callers not yet migrated. */
 export async function checkInOrderLine(lineId: string, checkedInBy: string): Promise<void> {
+  // Reads qty first so we can set checked_in_qty = qty (mark all as in)
+  const { data } = await supabase.from('order_lines').select('qty').eq('id', lineId).single();
+  const qty = (data as { qty: number } | null)?.qty ?? 1;
   const { error } = await supabase
     .from('order_lines')
-    .update({ checked_in_at: new Date().toISOString(), checked_in_by: checkedInBy })
+    .update({ checked_in_at: new Date().toISOString(), checked_in_by: checkedInBy, checked_in_qty: qty })
     .eq('id', lineId);
   if (error) throw error;
 }
 
-/** Clear check-in status on an order_line (undo a mistaken check-in). */
+/** @deprecated Use uncheckInOne. */
 export async function uncheckInOrderLine(lineId: string): Promise<void> {
   const { error } = await supabase
     .from('order_lines')
-    .update({ checked_in_at: null, checked_in_by: null })
+    .update({ checked_in_at: null, checked_in_by: null, checked_in_qty: 0 })
     .eq('id', lineId);
   if (error) throw error;
 }
@@ -62,17 +92,18 @@ export async function recordManualCheckin(screeningId: string, checkedInBy: stri
   if (error) throw error;
 }
 
-/** Combined check-in counts (in-person + Wix + manual taps) per screening_id. */
+/** Combined check-in counts (in-person + Wix + manual taps) per screening_id.
+ *  In-person counts use checked_in_qty (per-ticket granularity). */
 export async function loadCheckinCounts(): Promise<Map<string, number>> {
   const [ipRes, wixRes, manualRes] = await Promise.all([
-    supabase.from('order_lines').select('screening_id, qty').not('checked_in_at', 'is', null),
+    supabase.from('order_lines').select('screening_id, checked_in_qty').gt('checked_in_qty', 0),
     supabase.from('wix_checkins').select('screening_id').not('screening_id', 'is', null),
     supabase.from('manual_checkins').select('screening_id, qty'),
   ]);
 
   const counts = new Map<string, number>();
-  for (const r of (ipRes.data ?? []) as { screening_id: string; qty: number }[]) {
-    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + r.qty);
+  for (const r of (ipRes.data ?? []) as { screening_id: string; checked_in_qty: number }[]) {
+    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + r.checked_in_qty);
   }
   for (const r of (wixRes.data ?? []) as { screening_id: string }[]) {
     counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + 1);

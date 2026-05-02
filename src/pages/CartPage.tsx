@@ -12,7 +12,7 @@ import { PassScanner } from '../components/PassScanner';
 import { HeartlandReceiptModal } from '../components/HeartlandReceiptModal';
 import { parseHeartlandReceipt } from '../lib/heartland-receipt';
 import type { ParsedHeartlandReceipt } from '../lib/heartland-receipt';
-import { getCheckinLinesForOrder, checkInOrderLine, uncheckInOrderLine, type OrderLineWithScreening } from '../lib/checkins';
+import { getCheckinLinesForOrder, checkInOne, uncheckInOne, type OrderLineWithScreening } from '../lib/checkins';
 import { sendReceiptEmail } from '../lib/email';
 
 export function CartPage() {
@@ -33,6 +33,8 @@ export function CartPage() {
   const [submitting, setSubmitting] = useState(false);
   const [lastSale, setLastSale] = useState<{ changeCents: number; subtotalCents: number; synced: boolean; external: boolean; orderId: string; ref: string | null; name: string | null; email: string | null; lines: typeof lines } | null>(null);
   const [checkoutLines, setCheckoutLines] = useState<OrderLineWithScreening[] | null>(null);
+  // Per-line checked_in_qty tracked locally after checkout
+  const [checkedInQty, setCheckedInQty] = useState<Record<string, number>>({});
   const [checkingIn, setCheckingIn] = useState<Set<string>>(new Set());
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<'sent' | 'error' | null>(null);
@@ -159,7 +161,13 @@ export function CartPage() {
       // Load order_lines for post-checkout check-in (only works when synced)
       if (result.synced) {
         getCheckinLinesForOrder(result.orderId)
-          .then(setCheckoutLines)
+          .then((cls) => {
+            setCheckoutLines(cls);
+            // Seed local qty map from DB state
+            const init: Record<string, number> = {};
+            for (const l of cls) init[l.id] = l.checked_in_qty ?? 0;
+            setCheckedInQty(init);
+          })
           .catch(() => {});
       }
       clear();
@@ -209,11 +217,13 @@ export function CartPage() {
             <div className="text-sm font-semibold mb-3 text-slate-200">Check in at door</div>
             <div className="space-y-2">
               {checkoutLines.map((line) => {
-                const alreadyIn = !!line.checked_in_at;
-                const isChecking = checkingIn.has(line.id);
+                const total = line.qty;
+                const inQty = checkedInQty[line.id] ?? 0;
+                const full = inQty >= total;
+                const busy = checkingIn.has(line.id);
                 const screening = line.screenings;
                 return (
-                  <div key={line.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 border ${alreadyIn ? 'bg-emerald-950/40 border-emerald-800' : 'bg-slate-900 border-slate-700'}`}>
+                  <div key={line.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 border ${full ? 'bg-emerald-950/40 border-emerald-800' : inQty > 0 ? 'bg-amber-950/30 border-amber-700' : 'bg-slate-900 border-slate-700'}`}>
                     <div className="flex-1 min-w-0">
                       {screening && (
                         <div className="text-xs text-slate-400 mb-0.5">
@@ -222,50 +232,60 @@ export function CartPage() {
                         </div>
                       )}
                       <div className="font-semibold text-sm leading-tight">
-                        {line.label}{line.qty > 1 ? ` ×${line.qty}` : ''}
+                        {line.label}
                       </div>
                       {line.patron_name && (
                         <div className="text-xs text-slate-400 mt-0.5">{line.patron_name}</div>
                       )}
                     </div>
-                    {alreadyIn ? (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-emerald-400 text-sm font-semibold">✓ In</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Status badge */}
+                      {full ? (
+                        <span className="text-emerald-400 text-sm font-semibold">
+                          ✓ {total > 1 ? `All ${total} in` : 'In'}
+                        </span>
+                      ) : inQty > 0 ? (
+                        <span className="text-amber-300 text-sm font-semibold tabular-nums">
+                          {inQty}/{total} in
+                        </span>
+                      ) : null}
+                      {/* −1 undo button */}
+                      {inQty > 0 && (
                         <button
+                          disabled={busy}
                           onClick={async () => {
                             if (!user) return;
+                            setCheckingIn((p) => new Set(p).add(line.id));
                             try {
-                              await uncheckInOrderLine(line.id);
-                              setCheckoutLines((prev) =>
-                                prev ? prev.map((l) => l.id === line.id ? { ...l, checked_in_at: null, checked_in_by: null } : l) : prev
-                              );
-                            } catch { /* ignore */ }
+                              await uncheckInOne(line.id, inQty);
+                              setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
+                            } catch { /* ignore */ } finally {
+                              setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                            }
                           }}
-                          className="text-xs text-slate-500 hover:text-amber-400 underline-offset-2 hover:underline"
+                          className="w-9 h-9 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold rounded-lg"
+                        >−</button>
+                      )}
+                      {/* +1 check-in button */}
+                      {!full && (
+                        <button
+                          disabled={busy}
+                          onClick={async () => {
+                            if (!user) return;
+                            setCheckingIn((p) => new Set(p).add(line.id));
+                            try {
+                              await checkInOne(line.id, user.name, inQty, total);
+                              setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
+                            } catch { /* ignore */ } finally {
+                              setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                            }
+                          }}
+                          className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg whitespace-nowrap"
                         >
-                          Undo
+                          {busy ? '…' : `Check In${total > 1 ? ' +1' : ' ✓'}`}
                         </button>
-                      </div>
-                    ) : (
-                      <button
-                        disabled={isChecking}
-                        onClick={async () => {
-                          if (!user) return;
-                          setCheckingIn((prev) => new Set(prev).add(line.id));
-                          try {
-                            await checkInOrderLine(line.id, user.name);
-                            setCheckoutLines((prev) =>
-                              prev ? prev.map((l) => l.id === line.id ? { ...l, checked_in_at: new Date().toISOString(), checked_in_by: user.name } : l) : prev
-                            );
-                          } catch { /* ignore */ } finally {
-                            setCheckingIn((prev) => { const s = new Set(prev); s.delete(line.id); return s; });
-                          }
-                        }}
-                        className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg whitespace-nowrap shrink-0"
-                      >
-                        {isChecking ? '…' : `Check In${line.qty > 1 ? ` ×${line.qty}` : ' ✓'}`}
-                      </button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -326,7 +346,7 @@ export function CartPage() {
           <button
             onClick={() => {
               setLastSale(null); setCheckoutLines(null);
-              setCheckingIn(new Set()); setEmailResult(null);
+              setCheckingIn(new Set()); setCheckedInQty({}); setEmailResult(null);
               nav('/catalog');
             }}
             className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl"

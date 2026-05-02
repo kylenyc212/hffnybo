@@ -46,11 +46,12 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     soldByScreening.set(l.screening_id, (soldByScreening.get(l.screening_id) ?? 0) + (l.qty ?? 0));
   }
 
-  // Check-in counts (in-person + Wix + manual taps) per screening
+  // Check-in counts (in-person + Wix + manual taps) per screening.
+  // Use checked_in_qty for per-ticket granularity.
   const { data: checkedInLines } = await supabase
     .from('order_lines')
-    .select('screening_id, qty')
-    .not('checked_in_at', 'is', null);
+    .select('screening_id, checked_in_qty')
+    .gt('checked_in_qty', 0);
   const { data: wixCheckins } = await supabase
     .from('wix_checkins')
     .select('screening_id')
@@ -60,8 +61,8 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     .select('screening_id, qty');
 
   const checkinByScreening = new Map<string, number>();
-  for (const r of ((checkedInLines ?? []) as { screening_id: string; qty: number }[])) {
-    checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + r.qty);
+  for (const r of ((checkedInLines ?? []) as { screening_id: string; checked_in_qty: number }[])) {
+    checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + r.checked_in_qty);
   }
   for (const r of ((wixCheckins ?? []) as { screening_id: string }[])) {
     checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + 1);

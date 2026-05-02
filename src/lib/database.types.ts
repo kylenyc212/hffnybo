@@ -112,6 +112,7 @@ export interface OrderLineRow {
   patron_name: string | null;
   checked_in_at: string | null;
   checked_in_by: string | null;
+  checked_in_qty: number;
   voided_at: string | null;
   voided_by: string | null;
 }
