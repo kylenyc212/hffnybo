@@ -3,6 +3,8 @@ import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { DENOMS } from '../components/DenomCounter';
 import { TestCountModal, CloseDrawerModal } from '../components/DrawerActionModals';
+import { VoidModal } from '../components/VoidModal';
+import { HardDeleteModal } from '../components/HardDeleteModal';
 import { useSession } from '../lib/session';
 import {
   downloadCSV,
@@ -45,6 +47,7 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
 
 function DrawerReportView() {
   const { user } = useSession();
+  const isSuperAdmin = user?.role === 'super_admin';
   const [drawers, setDrawers] = useState<CashDrawerRow[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [report, setReport] = useState<DrawerReport | null>(null);
@@ -104,7 +107,7 @@ function DrawerReportView() {
           </div>
         )}
       </div>
-      {report && <DrawerReportBody report={report} />}
+      {report && <DrawerReportBody report={report} isSuperAdmin={isSuperAdmin} onRefresh={() => setBump((n) => n + 1)} />}
       {showTest && report && user && (
         <TestCountModal
           drawer={report.drawer}
@@ -127,7 +130,9 @@ function DrawerReportView() {
   );
 }
 
-function DrawerReportBody({ report }: { report: DrawerReport }) {
+function DrawerReportBody({ report, isSuperAdmin, onRefresh }: { report: DrawerReport; isSuperAdmin: boolean; onRefresh: () => void }) {
+  const [voidFor, setVoidFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
+  const [deleteFor, setDeleteFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
   function buildReportText(): string {
     const m = (cents: number) => `$${(cents / 100).toFixed(2)}`;
     const lines: string[] = [
@@ -308,29 +313,55 @@ function DrawerReportBody({ report }: { report: DrawerReport }) {
             <div className="text-lg font-semibold">💳 CC / Heartland</div>
             <div className="text-emerald-400 font-bold tabular-nums">{money(report.ccTotalCents)}</div>
           </div>
-          <table className="w-full text-sm">
-            <thead className="text-xs text-slate-500">
-              <tr>
-                <th className="text-left font-normal py-1">Time</th>
-                <th className="text-left font-normal py-1">Customer</th>
-                <th className="text-left font-normal py-1">Ref #</th>
-                <th className="text-right font-normal py-1">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.ccOrders.map((o) => (
-                <tr key={o.id} className="border-t border-slate-700">
-                  <td className="py-1.5 text-slate-400 whitespace-nowrap pr-3">
-                    {new Date(o.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })}
-                  </td>
-                  <td className="py-1.5 pr-3">{o.customer_name ?? <span className="text-slate-600">—</span>}</td>
-                  <td className="py-1.5 font-mono text-xs text-slate-400 pr-3">{o.external_ref ?? <span className="text-slate-600">—</span>}</td>
-                  <td className="py-1.5 text-right tabular-nums font-semibold">{money(o.subtotal_cents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul className="divide-y divide-slate-700">
+            {report.ccOrders.map((o) => {
+              const timeLabel = new Date(o.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+              const desc = `CC · ${o.customer_name ?? 'no name'} · Ref ${o.external_ref ?? '—'} · ${timeLabel}`;
+              return (
+                <li key={o.id} className="py-2 flex items-center gap-2 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold tabular-nums">{money(o.subtotal_cents)}</div>
+                    <div className="text-xs text-slate-400">
+                      {timeLabel} · {o.cashier_name}
+                      {o.customer_name && <> · {o.customer_name}</>}
+                      {o.external_ref && <> · <span className="font-mono">{o.external_ref}</span></>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setVoidFor({ id: o.id, amountCents: o.subtotal_cents, description: desc })}
+                    className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                  >Void</button>
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => setDeleteFor({ id: o.id, amountCents: o.subtotal_cents, description: desc })}
+                      className="text-xs bg-slate-800 hover:bg-red-900 text-red-300 hover:text-white px-2 py-1 rounded border border-red-900/50"
+                    >✕ Delete</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
+      )}
+      {voidFor && (
+        <VoidModal
+          mode="order"
+          targetId={voidFor.id}
+          amountCents={voidFor.amountCents}
+          description={voidFor.description}
+          onClose={() => setVoidFor(null)}
+          onDone={() => { setVoidFor(null); onRefresh(); }}
+        />
+      )}
+      {deleteFor && (
+        <HardDeleteModal
+          mode="order"
+          targetId={deleteFor.id}
+          amountCents={deleteFor.amountCents}
+          description={deleteFor.description}
+          onClose={() => setDeleteFor(null)}
+          onDone={() => { setDeleteFor(null); onRefresh(); }}
+        />
       )}
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">

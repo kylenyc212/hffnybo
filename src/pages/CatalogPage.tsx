@@ -2,11 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { loadScreenings, type ScreeningWithSold } from '../lib/queries';
 import { useCart } from '../lib/cart';
-import { nyDateKey, nyTodayKey, fmtDayHeader } from '../lib/datetime';
+import { nyDateKey, nyTodayKey, fmtDayHeader, fmtTime } from '../lib/datetime';
 import { ScreeningCard } from '../components/ScreeningCard';
 
 const FESTIVAL_FROM = '2026-05-01';
 const FESTIVAL_TO = '2026-05-07';
+const COLLAPSE_AFTER_MINS = 90;
+
+/** Returns true once a screening is 90+ minutes past its start time. */
+function isPast(startsAt: string): boolean {
+  return Date.now() - new Date(startsAt).getTime() > COLLAPSE_AFTER_MINS * 60 * 1000;
+}
 
 /** Short label for date-jump buttons: "May 1", "May 2", etc. */
 function shortDay(dayKey: string) {
@@ -21,6 +27,15 @@ export function CatalogPage() {
   const [search, setSearch] = useState('');
   const [passesOpen, setPassesOpen] = useState(false);
   const [merchOpen, setMerchOpen] = useState(false);
+  const [expandedPastIds, setExpandedPastIds] = useState<Set<string>>(new Set());
+
+  function togglePast(id: string) {
+    setExpandedPastIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
   const cartCount = useCart((s) => s.count());
 
   useEffect(() => {
@@ -193,18 +208,57 @@ export function CatalogPage() {
         <div className="text-slate-400">No upcoming screenings.</div>
       ) : (
         <div className="space-y-6">
-          {grouped.map(([dayKey, list]) => (
-            <section key={dayKey} id={`day-${dayKey}`} className="scroll-mt-16">
-              <h2 className="text-sm uppercase tracking-wide text-slate-400 mb-2 sticky top-14 bg-slate-900 py-1">
-                {fmtDayHeader(list[0].starts_at)}
-              </h2>
-              <div className="space-y-3">
-                {list.map((s) => (
-                  <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
-                ))}
-              </div>
-            </section>
-          ))}
+          {grouped.map(([dayKey, list]) => {
+            const past = list.filter((s) => isPast(s.starts_at));
+            const active = list.filter((s) => !isPast(s.starts_at));
+            const cols = Math.min(past.length, 4);
+            return (
+              <section key={dayKey} id={`day-${dayKey}`} className="scroll-mt-16">
+                <h2 className="text-sm uppercase tracking-wide text-slate-400 mb-2 sticky top-14 bg-slate-900 py-1">
+                  {fmtDayHeader(list[0].starts_at)}
+                </h2>
+
+                {/* Collapsed past screenings — N equal-width toggle buttons */}
+                {past.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    <div
+                      className="grid gap-2"
+                      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                    >
+                      {past.map((s) => {
+                        const open = expandedPastIds.has(s.id);
+                        return (
+                          <button
+                            key={s.id}
+                            onClick={() => togglePast(s.id)}
+                            className={`py-2 px-3 rounded-xl text-sm font-semibold border transition-colors text-left truncate ${
+                              open
+                                ? 'bg-slate-700 border-slate-500 text-white'
+                                : 'bg-slate-800/60 border-slate-700 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
+                            }`}
+                          >
+                            <span className="text-xs mr-1">{open ? '▾' : '▸'}</span>
+                            {fmtTime(s.starts_at)} · {s.title}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Expanded cards for any open past screenings */}
+                    {past.filter((s) => expandedPastIds.has(s.id)).map((s) => (
+                      <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Active screenings */}
+                <div className="space-y-3">
+                  {active.map((s) => (
+                    <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
     </div>

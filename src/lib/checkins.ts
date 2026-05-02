@@ -98,14 +98,14 @@ export async function getUpcomingForCheckin(limit = 2) {
 }
 
 export interface OrderLineWithScreening extends OrderLineRow {
-  screenings: { title: string; starts_at: string } | null;
+  screenings: { title: string; starts_at: string; is_always_available: boolean } | null;
 }
 
 /** Load order_lines for a completed order (for post-checkout check-in), with screening name/time. */
 export async function getCheckinLinesForOrder(orderId: string): Promise<OrderLineWithScreening[]> {
   const { data, error } = await supabase
     .from('order_lines')
-    .select('*, screenings(title, starts_at)')
+    .select('*, screenings(title, starts_at, is_always_available)')
     .eq('order_id', orderId)
     .order('id');
   if (error) throw error;

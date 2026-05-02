@@ -615,6 +615,11 @@ function OpenDrawerView({
                           <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
                         )}
                       </div>
+                      {e.kind === 'sale' && (e.order_customer_name || e.order_customer_email) && (
+                        <div className="text-xs text-indigo-300 mt-0.5">
+                          {[e.order_customer_name, e.order_customer_email].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                     </div>
                     <div
                       className={`tabular-nums font-semibold ${
@@ -751,7 +756,8 @@ function OpenDrawerView({
                             <div className="min-w-0 flex-1">
                               {line.screenings && (
                                 <div className="text-xs text-slate-500">
-                                  {line.screenings.title} · {fmtTime(line.screenings.starts_at)}
+                                  {line.screenings.title}
+                                  {!line.screenings.is_always_available && ` · ${fmtTime(line.screenings.starts_at)}`}
                                 </div>
                               )}
                               <div className="text-sm text-slate-200">

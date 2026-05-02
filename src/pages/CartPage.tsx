@@ -217,7 +217,8 @@ export function CartPage() {
                     <div className="flex-1 min-w-0">
                       {screening && (
                         <div className="text-xs text-slate-400 mb-0.5">
-                          {screening.title} · {fmtWhen(screening.starts_at)}
+                          {screening.title}
+                          {!screening.is_always_available && ` · ${fmtWhen(screening.starts_at)}`}
                         </div>
                       )}
                       <div className="font-semibold text-sm leading-tight">

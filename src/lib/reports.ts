@@ -207,7 +207,7 @@ export interface FestivalReport {
 export async function loadFestivalReport(): Promise<FestivalReport> {
   const [{ data: orderData, error: oErr }, { data: lineData, error: lErr }, { data: sData, error: sErr }] =
     await Promise.all([
-      supabase.from('orders').select('id, source, voided_at').eq('source', 'boxoffice').is('voided_at', null),
+      supabase.from('orders').select('id, source, voided_at').in('source', ['boxoffice', 'external_heartland']).is('voided_at', null),
       supabase.from('order_lines').select('*'),
       supabase.from('screenings').select('*').order('starts_at', { ascending: true })
     ]);
