@@ -105,7 +105,7 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
         drawerId: null,            // Heartland CC never touches the cash drawer
         cashTenderedCents: 0,
         source: 'external_heartland',
-        externalRef: receipt.receiptNumber || receipt.invoiceNumber || null,
+        externalRef: receipt.invoiceNumber || receipt.receiptNumber || null,
         customerName: cName.trim() || null,
         customerEmail: cEmail.trim() || null,
       });
@@ -153,7 +153,7 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
         }));
       await sendReceiptEmail({
         to: toEmail,
-        orderRef: receipt.receiptNumber || receipt.invoiceNumber || null,
+        orderRef: receipt.invoiceNumber || receipt.receiptNumber || null,
         cashierName: user.name,
         items,
         totalCents: success.totalCents,
@@ -189,9 +189,11 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
               </div>
             )}
             {cName && <div className="mt-2 text-slate-200 font-semibold">{cName}</div>}
-            {(receipt.receiptNumber || receipt.invoiceNumber) && (
+            {(receipt.invoiceNumber || receipt.receiptNumber) && (
               <div className="mt-1 font-mono text-sm text-slate-400">
-                Ref: {receipt.receiptNumber || receipt.invoiceNumber}
+                {receipt.invoiceNumber
+                  ? `Invoice #${receipt.invoiceNumber}`
+                  : `Receipt #${receipt.receiptNumber}`}
               </div>
             )}
             <div className="mt-2 text-slate-300">{money(success.totalCents)}</div>
@@ -263,8 +265,12 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
         <div className="flex items-center justify-between">
           <div>
             <div className="font-bold text-lg">Heartland Receipt</div>
-            {receipt.receiptNumber && (
-              <div className="text-xs text-slate-400 font-mono">#{receipt.receiptNumber}</div>
+            {(receipt.invoiceNumber || receipt.receiptNumber) && (
+              <div className="text-xs text-slate-400 font-mono">
+                {receipt.invoiceNumber
+                  ? `Invoice #${receipt.invoiceNumber}`
+                  : `Receipt #${receipt.receiptNumber}`}
+              </div>
             )}
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>

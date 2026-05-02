@@ -387,7 +387,7 @@ export function CartPage() {
               setPasteText(text);
               if (text.trim().length > 20) {
                 const receipt = parseHeartlandReceipt(text);
-                if (receipt.items.length > 0 || receipt.receiptNumber) {
+                if (receipt.items.length > 0 || receipt.invoiceNumber || receipt.receiptNumber) {
                   setShortcutReceipt({ ...receipt, _rawText: text } as ParsedHeartlandReceipt & { _rawText: string });
                   setPasteOpen(false);
                   setPasteText('');
