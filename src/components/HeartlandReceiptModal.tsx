@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
 import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
-import { matchReceiptItems, matchedItemsToCartLines } from '../lib/heartland-receipt';
-import type { ParsedHeartlandReceipt, MatchedItem } from '../lib/heartland-receipt';
+import {
+  matchReceiptItems,
+  matchedItemsToCartLines,
+  loadMatchCatalog,
+} from '../lib/heartland-receipt';
+import type {
+  ParsedHeartlandReceipt,
+  MatchedItem,
+  TTypeRow,
+  SRow,
+} from '../lib/heartland-receipt';
 import { checkout } from '../lib/checkout';
 import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
 import type { OrderLineWithScreening } from '../lib/checkins';
@@ -28,21 +37,57 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
   const [checkinLines, setCheckinLines]   = useState<OrderLineWithScreening[]>([]);
   const [checkingIn, setCheckingIn]       = useState(false);
 
+  // Catalog for manual-match dropdowns
+  const [catalog, setCatalog] = useState<{ ticketTypes: TTypeRow[]; screenings: SRow[] } | null>(null);
+  // Manual overrides keyed by item index: { screeningId, ticketTypeId }
+  const [manualSc, setManualSc] = useState<Record<number, string>>({});   // idx → screeningId
+  const [manualTt, setManualTt] = useState<Record<number, string>>({});   // idx → ticketTypeId
+
   useEffect(() => {
     setLoading(true);
-    matchReceiptItems(receipt.items)
-      .then(setMatched)
+    Promise.all([
+      matchReceiptItems(receipt.items),
+      loadMatchCatalog(),
+    ])
+      .then(([matchResult, cat]) => {
+        setMatched(matchResult);
+        setCatalog(cat);
+      })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Match failed'))
       .finally(() => setLoading(false));
   }, [receipt]);
+
+  /** Merge auto-matched results with any manual overrides */
+  function buildFinalMatched(): MatchedItem[] {
+    if (!matched || !catalog) return matched ?? [];
+    return matched.map((m, i) => {
+      const scId = manualSc[i];
+      const ttId = manualTt[i];
+      if (!scId || !ttId) return m; // no override → use auto result (may be unmatched)
+      const sc = catalog.screenings.find((s) => s.id === scId);
+      const tt = catalog.ticketTypes.find((t) => t.id === ttId);
+      if (!sc || !tt) return m;
+      return {
+        ...m,
+        screeningId: sc.id,
+        screeningTitle: sc.title,
+        screeningStartsAt: sc.starts_at,
+        ticketTypeId: tt.id,
+        label: tt.label,
+        category: tt.category,
+        matched: true,
+      };
+    });
+  }
 
   async function confirm() {
     if (!matched || !user || !deviceLabel) return;
     setSubmitting(true);
     setErr(null);
     try {
-      const baseLines = matchedItemsToCartLines(matched);
-      if (baseLines.length === 0) throw new Error('No items to record');
+      const finalMatched = buildFinalMatched();
+      const baseLines = matchedItemsToCartLines(finalMatched);
+      if (baseLines.length === 0) throw new Error('No items to record — assign each item to a screening first');
       const lines = baseLines.map((l, i) => ({ ...l, key: `hl-${i}` }));
 
       const result = await checkout({
@@ -77,7 +122,8 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
     }
   }
 
-  const unmatched = matched?.filter((m) => !m.matched).length ?? 0;
+  const finalMatched = buildFinalMatched();
+  const stillUnmatched = finalMatched.filter((m) => !m.matched).length;
 
   // ── Success screen ──────────────────────────────────────────────────────────
   if (success) {
@@ -210,48 +256,105 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-xl">{err}</div>
         )}
 
-        {matched && matched.length > 0 && (
+        {matched && matched.length > 0 && catalog && (
           <div className="space-y-2">
-            {matched.map((m, i) => (
-              <div
-                key={i}
-                className={`rounded-xl border p-3 ${
-                  m.matched
-                    ? 'bg-emerald-950/40 border-emerald-800'
-                    : 'bg-amber-950/30 border-amber-800'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm leading-tight">
-                      {m.matched ? m.label : m.raw.rawName}
-                      {m.raw.qty > 1 && <span className="text-slate-400 ml-1">×{m.raw.qty}</span>}
-                    </div>
-                    {m.matched && m.screeningTitle && (
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        {m.screeningTitle}
-                        {m.screeningStartsAt ? ` · ${fmtWhen(m.screeningStartsAt)}` : ''}
-                      </div>
-                    )}
-                    {!m.matched && (
-                      <div className="text-xs text-amber-400 mt-0.5">
-                        No matching screening — will record with Heartland name
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="tabular-nums font-semibold">{money(m.raw.qty * m.raw.unitPriceCents)}</div>
-                    <div className={`text-xs mt-0.5 ${m.matched ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {m.matched ? '✓ matched' : '⚠ unmatched'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+            {matched.map((m, i) => {
+              const fm = finalMatched[i]; // after applying manual override
+              const isFixed = !m.matched && fm.matched; // was unmatched, now manually assigned
+              const scOptions = catalog.screenings
+                .slice()
+                .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+              const ttOptions = catalog.ticketTypes.filter(
+                (t) => t.screening_id === (manualSc[i] ?? '')
+              );
 
-            {unmatched > 0 && (
+              return (
+                <div
+                  key={i}
+                  className={`rounded-xl border p-3 space-y-2 ${
+                    fm.matched
+                      ? isFixed
+                        ? 'bg-blue-950/40 border-blue-700'
+                        : 'bg-emerald-950/40 border-emerald-800'
+                      : 'bg-amber-950/30 border-amber-800'
+                  }`}
+                >
+                  {/* Item header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm leading-tight">
+                        {fm.matched ? fm.label : m.raw.rawName}
+                        {m.raw.qty > 1 && <span className="text-slate-400 ml-1">×{m.raw.qty}</span>}
+                      </div>
+                      {fm.matched && fm.screeningTitle && (
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          {fm.screeningTitle}
+                          {fm.screeningStartsAt ? ` · ${fmtWhen(fm.screeningStartsAt)}` : ''}
+                        </div>
+                      )}
+                      {!fm.matched && (
+                        <div className="text-xs text-amber-400 mt-0.5">
+                          Not matched — assign below
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="tabular-nums font-semibold">{money(m.raw.qty * m.raw.unitPriceCents)}</div>
+                      <div className={`text-xs mt-0.5 ${
+                        isFixed ? 'text-blue-400' : fm.matched ? 'text-emerald-400' : 'text-amber-400'
+                      }`}>
+                        {isFixed ? '✓ assigned' : fm.matched ? '✓ matched' : '⚠ unmatched'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Manual-match dropdowns — show for unmatched OR already-fixed items */}
+                  {(!m.matched || isFixed) && (
+                    <div className="space-y-1.5 pt-1 border-t border-slate-700/60">
+                      {/* Screening picker */}
+                      <select
+                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-2 py-1.5 text-xs"
+                        value={manualSc[i] ?? ''}
+                        onChange={(e) => {
+                          const scId = e.target.value;
+                          setManualSc((p) => ({ ...p, [i]: scId }));
+                          setManualTt((p) => { const n = { ...p }; delete n[i]; return n; });
+                        }}
+                      >
+                        <option value="">— Select screening —</option>
+                        {scOptions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.starts_at ? `${fmtWhen(s.starts_at)} · ` : ''}{s.title}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Ticket type picker — only shown once a screening is chosen */}
+                      {manualSc[i] && (
+                        <select
+                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-2 py-1.5 text-xs"
+                          value={manualTt[i] ?? ''}
+                          onChange={(e) => {
+                            setManualTt((p) => ({ ...p, [i]: e.target.value }));
+                          }}
+                        >
+                          <option value="">— Select ticket type —</option>
+                          {ttOptions.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label} — {money(t.price_cents)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {stillUnmatched > 0 && (
               <div className="text-xs text-amber-400 px-1">
-                {unmatched} item{unmatched > 1 ? 's' : ''} couldn't be matched — set up Heartland SKUs in Admin → Ticket Types.
+                {stillUnmatched} item{stillUnmatched > 1 ? 's' : ''} still unmatched — assign above or they'll be skipped.
               </div>
             )}
           </div>
@@ -283,11 +386,11 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
               Cancel
             </button>
             <button
-              disabled={submitting || matched.length === 0}
+              disabled={submitting || finalMatched.filter((m) => m.matched).length === 0}
               onClick={confirm}
               className="flex-[2] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-bold py-3 rounded-xl"
             >
-              {submitting ? 'Recording…' : 'Confirm & Check In ✓'}
+              {submitting ? 'Recording…' : `Confirm & Check In ✓${stillUnmatched > 0 ? ` (skip ${stillUnmatched})` : ''}`}
             </button>
           </div>
         )}

@@ -152,7 +152,7 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
 
 // ── Ticket type + screening loader ─────────────────────────────────────────
 
-interface TTypeRow {
+export interface TTypeRow {
   id: string;
   screening_id: string;
   label: string;
@@ -160,7 +160,7 @@ interface TTypeRow {
   category: TicketCategory;
   heartland_sku: string | null;
 }
-interface SRow {
+export interface SRow {
   id: string;
   title: string;
   starts_at: string;
@@ -296,6 +296,11 @@ export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<Mat
 }
 
 // ── Convert to CartLines ────────────────────────────────────────────────────
+
+/** Expose catalog so the receipt modal can power manual-match dropdowns */
+export async function loadMatchCatalog(): Promise<{ ticketTypes: TTypeRow[]; screenings: SRow[] }> {
+  return loadCatalog();
+}
 
 export function matchedItemsToCartLines(matched: MatchedItem[]): Omit<CartLine, 'key'>[] {
   return matched
