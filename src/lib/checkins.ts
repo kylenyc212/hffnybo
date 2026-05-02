@@ -119,13 +119,13 @@ export async function getUpcomingForCheckin(limit = 2) {
   const lookback = new Date(Date.now() - 90 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('screenings')
-    .select('id, title, starts_at, capacity, online_sold')
+    .select('id, title, starts_at, capacity, online_sold, wix_event_ids')
     .eq('is_always_available', false)
     .gte('starts_at', lookback)
     .order('starts_at', { ascending: true })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; title: string; starts_at: string; capacity: number; online_sold: number }>;
+  return (data ?? []) as Array<{ id: string; title: string; starts_at: string; capacity: number; online_sold: number; wix_event_ids: string[] }>;
 }
 
 export interface OrderLineWithScreening extends OrderLineRow {

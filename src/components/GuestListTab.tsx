@@ -43,7 +43,12 @@ const _cache: {
   fetchedAt: null,
 };
 
-export function GuestListTab() {
+interface GuestListTabProps {
+  jumpToEventId?: string;
+  onJumpConsumed?: () => void;
+}
+
+export function GuestListTab({ jumpToEventId, onJumpConsumed }: GuestListTabProps = {}) {
   const { user } = useSession();
 
   const [events, setEvents]                   = useState<WixEventSummary[]>(_cache.events);
@@ -81,6 +86,19 @@ export function GuestListTab() {
     loadGuests(selectedEventId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId]);
+
+  // Jump: when the QR scan tab taps a screening card, auto-select that event + load
+  useEffect(() => {
+    if (!jumpToEventId) return;
+    _cache.selectedEventId = jumpToEventId;
+    setSelectedEventId(jumpToEventId);
+    setSearch('');
+    setBoOrders([]);
+    setBoCheckedIn({});
+    loadGuests(jumpToEventId);
+    onJumpConsumed?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpToEventId]);
 
   async function loadGuests(eventId: string) {
     setGuestsLoading(true);

@@ -36,6 +36,7 @@ interface UpcomingScreening {
   starts_at: string;
   capacity: number;
   online_sold: number;
+  wix_event_ids: string[];
 }
 
 function parseQr(raw: string): { ticketNumber: string; eventId: string } | null {
@@ -60,6 +61,8 @@ export function CheckInPage() {
 
   // ── Main tab ──
   const [mainTab, setMainTab] = useState<MainTab>('scan');
+  // Set when user taps a screening card — GuestListTab picks this up to jump to that event
+  const [jumpEventId, setJumpEventId] = useState<string | undefined>(undefined);
 
   // ── Upcoming screenings ──
   const [upcoming, setUpcoming] = useState<UpcomingScreening[]>([]);
@@ -303,7 +306,12 @@ export function CheckInPage() {
       </div>
 
       {/* ── Guest List tab ── */}
-      {mainTab === 'guestlist' && <GuestListTab />}
+      {mainTab === 'guestlist' && (
+        <GuestListTab
+          jumpToEventId={jumpEventId}
+          onJumpConsumed={() => setJumpEventId(undefined)}
+        />
+      )}
 
       {/* ── Scan tab content (hidden when guest list is active) ── */}
       {mainTab === 'scan' && (
@@ -315,13 +323,21 @@ export function CheckInPage() {
           {upcoming.map((s) => {
             const count = checkinCounts.get(s.id) ?? 0;
             return (
-              <div key={s.id} className="bg-slate-800 border border-slate-700 rounded-xl p-3">
+              <div
+                key={s.id}
+                className="bg-slate-800 border border-slate-700 rounded-xl p-3 cursor-pointer hover:border-brand/60 hover:bg-slate-700/70 transition-colors"
+                onClick={() => {
+                  const eid = s.wix_event_ids?.[0];
+                  if (eid) { setJumpEventId(eid); setMainTab('guestlist'); }
+                }}
+              >
                 <div className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 mb-1">{s.title}</div>
                 <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
                 <div className="flex items-center justify-between mt-2 gap-1">
                   <span className="text-orange-400 font-bold text-sm">{count} ✓ in</span>
                   <button
-                    onClick={async () => {
+                    onClick={async (e) => {
+                      e.stopPropagation(); // don't also trigger the card click
                       if (!user) return;
                       // optimistic update
                       setCheckinCounts((prev) => {
