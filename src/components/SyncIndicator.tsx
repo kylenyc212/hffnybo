@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { queueCount, subscribe, syncPending, wireAutoSync } from '../lib/offlineQueue';
+import { queueCount, getQueue, subscribe, syncPending, wireAutoSync } from '../lib/offlineQueue';
 import { latestSync, CacheKeys } from '../lib/cache';
 
 function fmtAgo(d: Date): string {
@@ -17,6 +17,7 @@ export function SyncIndicator() {
   const [online, setOnline] = useState(navigator.onLine);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
   const [lastSync, setLastSync] = useState<Date | null>(
     latestSync([CacheKeys.screenings + ':2026-05-01:2026-05-07', CacheKeys.passholders, CacheKeys.openDrawer])
   );
@@ -47,12 +48,16 @@ export function SyncIndicator() {
   async function sync() {
     setBusy(true);
     setMsg(null);
+    setErrors([]);
     const r = await syncPending();
     setN(queueCount());
-    if (r.attempted === 0) setMsg('Nothing to sync');
-    else setMsg(`Synced ${r.succeeded}/${r.attempted}${r.failed ? ` — ${r.failed} failed` : ''}`);
+    if (r.attempted === 0) {
+      setMsg('Nothing to sync');
+    } else {
+      setMsg(`Synced ${r.succeeded}/${r.attempted}${r.failed ? ` — ${r.failed} failed` : ''}`);
+      if (r.errors.length > 0) setErrors(r.errors);
+    }
     setBusy(false);
-    setTimeout(() => setMsg(null), 4000);
   }
 
   const stale = lastSync ? (Date.now() - lastSync.getTime()) / 60000 : Infinity;
@@ -61,7 +66,7 @@ export function SyncIndicator() {
     stale < 30 ? 'text-amber-400' : 'text-red-400';
 
   return (
-    <div className="flex items-center gap-3 text-xs">
+    <div className="relative flex items-center gap-3 text-xs">
       <div className="flex items-center gap-1" title={online ? 'Online' : 'Offline — still works, queues sales locally'}>
         <span className={`w-2 h-2 rounded-full inline-block ${online ? 'bg-emerald-500' : 'bg-red-500'}`} />
         <span className={online ? 'text-emerald-400' : 'text-red-400'}>{online ? 'online' : 'offline'}</span>
@@ -83,7 +88,22 @@ export function SyncIndicator() {
           </button>
         </>
       )}
-      {msg && <span className="text-slate-300">{msg}</span>}
+      {msg && <span className={errors.length ? 'text-amber-300' : 'text-slate-300'}>{msg}</span>}
+      {errors.length > 0 && (
+        <div className="absolute top-full right-0 mt-1 bg-slate-900 border border-red-700 rounded-xl p-3 z-50 max-w-xs shadow-xl">
+          <div className="text-xs font-semibold text-red-400 mb-1">Sync error{errors.length > 1 ? 's' : ''}:</div>
+          {errors.map((e, i) => (
+            <div key={i} className="text-xs text-red-300 font-mono break-all">{e}</div>
+          ))}
+          {/* Also show last_error from any still-queued items */}
+          {getQueue().filter((op) => (op as {last_error?: string}).last_error).map((op) => (
+            <div key={op.id} className="text-xs text-slate-400 mt-1 break-all">
+              #{op.id.slice(0,8)}: {(op as {last_error?: string}).last_error}
+            </div>
+          ))}
+          <button onClick={() => setErrors([])} className="text-xs text-slate-500 mt-2 underline">dismiss</button>
+        </div>
+      )}
     </div>
   );
 }
