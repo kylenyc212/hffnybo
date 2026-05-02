@@ -18,15 +18,28 @@ interface GuestRecord {
   tickets: GuestTicket[];
 }
 
-export function GuestListTab() {
-  const [events, setEvents]               = useState<WixEventSummary[]>([]);
-  const [eventsLoading, setEventsLoading] = useState(true);
-  const [selectedEventId, setSelectedEventId] = useState('');
+// Module-level cache — survives navigation away and back within the same session.
+const _cache: {
+  events: WixEventSummary[];
+  selectedEventId: string;
+  guests: GuestRecord[];
+  fetchedAt: string | null;
+} = {
+  events: [],
+  selectedEventId: '',
+  guests: [],
+  fetchedAt: null,
+};
 
-  const [guests, setGuests]             = useState<GuestRecord[]>([]);
+export function GuestListTab() {
+  const [events, setEvents]               = useState<WixEventSummary[]>(_cache.events);
+  const [eventsLoading, setEventsLoading] = useState(_cache.events.length === 0);
+  const [selectedEventId, setSelectedEventId] = useState(_cache.selectedEventId);
+
+  const [guests, setGuests]             = useState<GuestRecord[]>(_cache.guests);
   const [guestsLoading, setGuestsLoading] = useState(false);
   const [guestsError, setGuestsError]   = useState<string | null>(null);
-  const [fetchedAt, setFetchedAt]       = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt]       = useState<string | null>(_cache.fetchedAt);
 
   const [search, setSearch] = useState('');
   // Per-ticket loading/error state keyed by ticket number
@@ -34,14 +47,17 @@ export function GuestListTab() {
   const [ticketError, setTicketError] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (_cache.events.length > 0) return; // already cached
     fetchWixEvents()
-      .then(({ events: evs }) => setEvents(evs))
+      .then(({ events: evs }) => { _cache.events = evs; setEvents(evs); })
       .catch(() => {})
       .finally(() => setEventsLoading(false));
   }, []);
 
   useEffect(() => {
     if (!selectedEventId) { setGuests([]); return; }
+    // If we already have cached guests for this event, don't re-fetch automatically
+    if (_cache.selectedEventId === selectedEventId && _cache.guests.length > 0) return;
     loadGuests(selectedEventId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId]);
@@ -55,8 +71,14 @@ export function GuestListTab() {
       const res  = await fetch(`/api/wix-guests?eventId=${encodeURIComponent(eventId)}`);
       const data = await res.json() as { guests?: GuestRecord[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setGuests(data.guests ?? []);
-      setFetchedAt(new Date().toISOString());
+      const fetched = data.guests ?? [];
+      const now = new Date().toISOString();
+      // Write through to cache
+      _cache.selectedEventId = eventId;
+      _cache.guests = fetched;
+      _cache.fetchedAt = now;
+      setGuests(fetched);
+      setFetchedAt(now);
     } catch (e: unknown) {
       setGuestsError(e instanceof Error ? e.message : 'Failed to load guests');
     } finally {
@@ -100,15 +122,17 @@ export function GuestListTab() {
       }
 
       // Optimistic update: mark this ticket checked in, recompute order checkedIn
-      setGuests((prev) =>
-        prev.map((g) => {
+      setGuests((prev) => {
+        const updated = prev.map((g) => {
           if (g.id !== guest.id) return g;
           const newTickets = g.tickets.map((t) =>
             t.number === ticket.number ? { ...t, checkedIn: true } : t
           );
           return { ...g, tickets: newTickets, checkedIn: newTickets.every((t) => t.checkedIn) };
-        })
-      );
+        });
+        _cache.guests = updated; // keep cache in sync
+        return updated;
+      });
     } catch (e: unknown) {
       setTicketError((prev) => ({
         ...prev,
@@ -131,7 +155,9 @@ export function GuestListTab() {
           <select
             value={selectedEventId}
             onChange={(e) => {
-              setSelectedEventId(e.target.value);
+              const id = e.target.value;
+              _cache.selectedEventId = id;
+              setSelectedEventId(id);
               setSearch('');
             }}
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm"
