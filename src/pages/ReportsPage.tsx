@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { money } from '../lib/money';
 import { fmtWhen } from '../lib/datetime';
 import { DENOMS } from '../components/DenomCounter';
@@ -11,23 +11,26 @@ import {
   listDrawers,
   loadDrawerReport,
   loadFestivalReport,
+  loadAllCCOrders,
   type DrawerReport,
-  type FestivalReport
+  type FestivalReport,
+  type CCOrderDetail,
 } from '../lib/reports';
 import type { CashDrawerRow } from '../lib/database.types';
 
-type Tab = 'drawer' | 'festival';
+type Tab = 'drawer' | 'festival' | 'cc';
 
 export function ReportsPage() {
   const [tab, setTab] = useState<Tab>('drawer');
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">Reports</h1>
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 flex-wrap">
         <TabBtn active={tab === 'drawer'} onClick={() => setTab('drawer')}>End-of-shift (drawer)</TabBtn>
         <TabBtn active={tab === 'festival'} onClick={() => setTab('festival')}>Festival master</TabBtn>
+        <TabBtn active={tab === 'cc'} onClick={() => setTab('cc')}>💳 CC / Heartland</TabBtn>
       </div>
-      {tab === 'drawer' ? <DrawerReportView /> : <FestivalReportView />}
+      {tab === 'drawer' ? <DrawerReportView /> : tab === 'festival' ? <FestivalReportView /> : <CCReportView />}
     </div>
   );
 }
@@ -481,6 +484,183 @@ function ScreeningBlock({ s }: { s: { title: string; starts_at: string; attendee
         </table>
       )}
     </li>
+  );
+}
+
+function CCReportView() {
+  const { user } = useSession();
+  const isSuperAdmin = user?.role === 'super_admin';
+  const [orders, setOrders] = useState<CCOrderDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [voidFor, setVoidFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
+  const [deleteFor, setDeleteFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      setOrders(await loadAllCCOrders());
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((o) =>
+      (o.customer_name ?? '').toLowerCase().includes(q) ||
+      (o.external_ref ?? '').toLowerCase().includes(q) ||
+      o.cashier_name.toLowerCase().includes(q) ||
+      o.device_label.toLowerCase().includes(q) ||
+      o.screeningTitles.some((t) => t.toLowerCase().includes(q))
+    );
+  }, [orders, search]);
+
+  const liveOrders = filtered.filter((o: CCOrderDetail) => !o.voided_at);
+  const totalCents = liveOrders.reduce((s: number, o: CCOrderDetail) => s + o.subtotal_cents, 0);
+
+  if (loading) return <div className="text-slate-400">Loading…</div>;
+  if (err) return <div className="text-red-400">{err}</div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <div className="text-lg font-semibold">💳 All CC / Heartland transactions</div>
+            <div className="text-sm text-slate-400 mt-0.5">{liveOrders.length} orders · {money(totalCents)} total</div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={load}
+              className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg"
+            >↺ Refresh</button>
+            <button
+              onClick={() => {
+                const rows: (string | number)[][] = [
+                  ['Time (ET)', 'Cashier', 'Device', 'Customer', 'Ref #', 'Screenings', 'Amount', 'Voided'],
+                  ...orders.map((o) => [
+                    new Date(o.created_at).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+                    o.cashier_name,
+                    o.device_label,
+                    o.customer_name ?? '',
+                    o.external_ref ?? '',
+                    o.screeningTitles.join('; '),
+                    (o.subtotal_cents / 100).toFixed(2),
+                    o.voided_at ? 'yes' : 'no',
+                  ])
+                ];
+                downloadCSV('hffny-cc-orders.csv', rows);
+              }}
+              className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg"
+            >Download CSV</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <input
+        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+        placeholder="Search by name, ref #, cashier, device, or screening…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+
+      {/* Order list */}
+      {filtered.length === 0 ? (
+        <div className="text-slate-500 text-sm text-center py-8">No CC orders found.</div>
+      ) : (
+        <ul className="space-y-2">
+          {filtered.map((o: CCOrderDetail) => {
+            const voided = !!o.voided_at;
+            const timeLabel = new Date(o.created_at).toLocaleString('en-US', {
+              timeZone: 'America/New_York',
+              month: 'short', day: 'numeric',
+              hour: 'numeric', minute: '2-digit'
+            });
+            const desc = `CC · ${o.customer_name ?? 'no name'} · Ref ${o.external_ref ?? '—'} · ${timeLabel}`;
+            return (
+              <li
+                key={o.id}
+                className={`bg-slate-800 border rounded-xl p-4 ${voided ? 'border-slate-700 opacity-50' : 'border-slate-700'}`}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    {/* Amount + voided badge */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-lg font-bold tabular-nums ${voided ? 'line-through text-slate-500' : ''}`}>
+                        {money(o.subtotal_cents)}
+                      </span>
+                      {voided && <span className="text-xs bg-red-900/60 border border-red-700 text-red-300 px-1.5 py-0.5 rounded">voided</span>}
+                      {o.external_ref && (
+                        <span className="text-xs font-mono text-slate-400">#{o.external_ref}</span>
+                      )}
+                    </div>
+                    {/* Customer + cashier */}
+                    <div className="text-sm text-slate-200">
+                      {o.customer_name ?? <span className="text-slate-500 italic">no name</span>}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {timeLabel} · {o.cashier_name} · {o.device_label}
+                    </div>
+                    {/* Screenings */}
+                    {o.screeningTitles.length > 0 && (
+                      <div className="text-xs text-slate-400 mt-1">
+                        {o.screeningTitles.join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                  {/* Actions */}
+                  {!voided && (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        onClick={() => setVoidFor({ id: o.id, amountCents: o.subtotal_cents, description: desc })}
+                        className="text-xs bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white px-2 py-1 rounded"
+                      >Void</button>
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => setDeleteFor({ id: o.id, amountCents: o.subtotal_cents, description: desc })}
+                          className="text-xs bg-slate-800 hover:bg-red-900 text-red-300 hover:text-white px-2 py-1 rounded border border-red-900/50"
+                        >✕ Delete</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {voidFor && (
+        <VoidModal
+          mode="order"
+          targetId={voidFor.id}
+          amountCents={voidFor.amountCents}
+          description={voidFor.description}
+          onClose={() => setVoidFor(null)}
+          onDone={() => { setVoidFor(null); load(); }}
+        />
+      )}
+      {deleteFor && (
+        <HardDeleteModal
+          mode="order"
+          targetId={deleteFor.id}
+          amountCents={deleteFor.amountCents}
+          description={deleteFor.description}
+          onClose={() => setDeleteFor(null)}
+          onDone={() => { setDeleteFor(null); load(); }}
+        />
+      )}
+    </div>
   );
 }
 

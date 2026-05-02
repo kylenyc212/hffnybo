@@ -265,6 +265,54 @@ export async function loadFestivalReport(): Promise<FestivalReport> {
   };
 }
 
+// ---------- All CC / Heartland orders ----------
+
+export interface CCOrderDetail {
+  id: string;
+  created_at: string;
+  cashier_name: string;
+  device_label: string;
+  customer_name: string | null;
+  external_ref: string | null;
+  subtotal_cents: number;
+  voided_at: string | null;
+  screeningTitles: string[]; // distinct screening names on this order
+}
+
+export async function loadAllCCOrders(): Promise<CCOrderDetail[]> {
+  const { data: orderData, error: oErr } = await supabase
+    .from('orders')
+    .select('id, created_at, cashier_name, device_label, customer_name, external_ref, subtotal_cents, voided_at')
+    .eq('source', 'external_heartland')
+    .order('created_at', { ascending: false });
+  if (oErr) throw oErr;
+  const orders = (orderData ?? []) as CCOrderDetail[];
+  if (orders.length === 0) return [];
+
+  const orderIds = orders.map((o) => o.id);
+  const { data: lineData } = await supabase
+    .from('order_lines')
+    .select('order_id, screening_id')
+    .in('order_id', orderIds);
+  const lines = (lineData ?? []) as { order_id: string; screening_id: string }[];
+
+  const scIds = Array.from(new Set(lines.map((l) => l.screening_id)));
+  const { data: scData } = scIds.length
+    ? await supabase.from('screenings').select('id, title').in('id', scIds)
+    : { data: [] };
+  const scMap = new Map((scData ?? []).map((s: { id: string; title: string }) => [s.id, s.title]));
+
+  const titlesByOrder = new Map<string, string[]>();
+  for (const l of lines) {
+    const title = scMap.get(l.screening_id) ?? '—';
+    const arr = titlesByOrder.get(l.order_id) ?? [];
+    if (!arr.includes(title)) arr.push(title);
+    titlesByOrder.set(l.order_id, arr);
+  }
+
+  return orders.map((o) => ({ ...o, screeningTitles: titlesByOrder.get(o.id) ?? [] }));
+}
+
 // ---------- CSV export ----------
 
 export function downloadCSV(filename: string, rows: (string | number)[][]) {
