@@ -41,6 +41,8 @@ export function PassScanner({ onClose, onFound }: Props) {
           controls.stop();
           await handleBarcode(text);
         });
+        // If cancelled while awaiting decodeFromVideoDevice, stop immediately
+        if (cancelled) { controls.stop(); return; }
         controlsRef.current = controls;
         setStatus('Point camera at pass barcode…');
       } catch (e: unknown) {
@@ -51,6 +53,12 @@ export function PassScanner({ onClose, onFound }: Props) {
     return () => {
       cancelled = true;
       controlsRef.current?.stop();
+      controlsRef.current = null;
+      // Explicitly kill MediaStream tracks so the camera indicator goes off
+      if (videoRef.current?.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach((t) => t.stop());
+        videoRef.current.srcObject = null;
+      }
     };
   }, []);
 

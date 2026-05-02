@@ -102,7 +102,8 @@ export function CheckInPage() {
   }, []);
 
   useEffect(() => {
-    if (phase !== 'scan') return;
+    // Stop camera when not on the scan tab or not in scan phase
+    if (phase !== 'scan' || mainTab !== 'scan') return;
     const reader = new BrowserMultiFormatReader();
     let cancelled = false;
 
@@ -117,6 +118,8 @@ export function CheckInPage() {
           controls.stop();
           handleCode(result.getText());
         });
+        // If cancelled while awaiting decodeFromVideoDevice, stop immediately
+        if (cancelled) { controls.stop(); return; }
         controlsRef.current = controls;
         setCamStatus('Point camera at the QR code on the Wix ticket…');
       } catch {
@@ -127,9 +130,15 @@ export function CheckInPage() {
     return () => {
       cancelled = true;
       controlsRef.current?.stop();
+      controlsRef.current = null;
+      // Explicitly kill MediaStream tracks so the camera indicator goes off
+      if (videoRef.current?.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach((t) => t.stop());
+        videoRef.current.srcObject = null;
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, scanKey]);
+  }, [phase, scanKey, mainTab]);
 
   async function handleCode(raw: string) {
     const parsed = parseQr(raw);
