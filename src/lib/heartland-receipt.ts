@@ -168,6 +168,8 @@ export interface SRow {
 
 let _cache: { ticketTypes: TTypeRow[]; screenings: SRow[] } | null = null;
 
+export function bustMatchCatalogCache() { _cache = null; }
+
 async function loadCatalog() {
   if (_cache) return _cache;
   const [{ data: tt }, { data: sc }] = await Promise.all([
