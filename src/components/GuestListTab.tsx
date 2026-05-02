@@ -1,6 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { WixEventSummary } from '../lib/wix';
 import { fetchWixEvents } from '../lib/wix';
+import {
+  lookupScreeningByWixId,
+  loadBOGuestsForScreening,
+  checkInOne,
+  uncheckInOne,
+} from '../lib/checkins';
+import type { BOGuestOrder } from '../lib/checkins';
+import { useSession } from '../lib/session';
 
 interface GuestTicket {
   number: string;
@@ -23,31 +31,44 @@ const _cache: {
   events: WixEventSummary[];
   selectedEventId: string;
   guests: GuestRecord[];
+  boOrders: BOGuestOrder[];
+  boScreeningId: string | null;
   fetchedAt: string | null;
 } = {
   events: [],
   selectedEventId: '',
   guests: [],
+  boOrders: [],
+  boScreeningId: null,
   fetchedAt: null,
 };
 
 export function GuestListTab() {
-  const [events, setEvents]               = useState<WixEventSummary[]>(_cache.events);
-  const [eventsLoading, setEventsLoading] = useState(_cache.events.length === 0);
+  const { user } = useSession();
+
+  const [events, setEvents]                   = useState<WixEventSummary[]>(_cache.events);
+  const [eventsLoading, setEventsLoading]     = useState(_cache.events.length === 0);
   const [selectedEventId, setSelectedEventId] = useState(_cache.selectedEventId);
 
-  const [guests, setGuests]             = useState<GuestRecord[]>(_cache.guests);
+  const [guests, setGuests]               = useState<GuestRecord[]>(_cache.guests);
   const [guestsLoading, setGuestsLoading] = useState(false);
-  const [guestsError, setGuestsError]   = useState<string | null>(null);
-  const [fetchedAt, setFetchedAt]       = useState<string | null>(_cache.fetchedAt);
+  const [guestsError, setGuestsError]     = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt]         = useState<string | null>(_cache.fetchedAt);
+
+  // Box-office guests
+  const [boOrders, setBoOrders]               = useState<BOGuestOrder[]>(_cache.boOrders);
+  const [boScreeningId, setBoScreeningId]     = useState<string | null>(_cache.boScreeningId);
+  const [boLoading, setBoLoading]             = useState(false);
+  // Local checked-in qty map: lineId → current qty (optimistic)
+  const [boCheckedIn, setBoCheckedIn]         = useState<Record<string, number>>({});
+  const [boLineBusy, setBoLineBusy]           = useState<Record<string, boolean>>({});
 
   const [search, setSearch] = useState('');
-  // Per-ticket loading/error state keyed by ticket number
   const [ticketBusy, setTicketBusy]   = useState<Record<string, boolean>>({});
   const [ticketError, setTicketError] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (_cache.events.length > 0) return; // already cached
+    if (_cache.events.length > 0) return;
     fetchWixEvents()
       .then(({ events: evs }) => { _cache.events = evs; setEvents(evs); })
       .catch(() => {})
@@ -55,8 +76,7 @@ export function GuestListTab() {
   }, []);
 
   useEffect(() => {
-    if (!selectedEventId) { setGuests([]); return; }
-    // If we already have cached guests for this event, don't re-fetch automatically
+    if (!selectedEventId) { setGuests([]); setBoOrders([]); return; }
     if (_cache.selectedEventId === selectedEventId && _cache.guests.length > 0) return;
     loadGuests(selectedEventId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -64,27 +84,68 @@ export function GuestListTab() {
 
   async function loadGuests(eventId: string) {
     setGuestsLoading(true);
+    setBoLoading(true);
     setGuestsError(null);
     setTicketBusy({});
     setTicketError({});
-    try {
-      const res  = await fetch(`/api/wix-guests?eventId=${encodeURIComponent(eventId)}`);
-      const data = await res.json() as { guests?: GuestRecord[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+
+    // Fetch Wix guests + linked BO screening in parallel
+    const [wixResult, boScreening] = await Promise.allSettled([
+      fetch(`/api/wix-guests?eventId=${encodeURIComponent(eventId)}`)
+        .then((r) => r.json() as Promise<{ guests?: GuestRecord[]; error?: string }>),
+      lookupScreeningByWixId(eventId),
+    ]);
+
+    // Wix guests
+    if (wixResult.status === 'fulfilled') {
+      const data = wixResult.value;
       const fetched = data.guests ?? [];
       const now = new Date().toISOString();
-      // Write through to cache
       _cache.selectedEventId = eventId;
       _cache.guests = fetched;
       _cache.fetchedAt = now;
       setGuests(fetched);
       setFetchedAt(now);
-    } catch (e: unknown) {
-      setGuestsError(e instanceof Error ? e.message : 'Failed to load guests');
-    } finally {
-      setGuestsLoading(false);
+      if (data.error) setGuestsError(data.error);
+    } else {
+      setGuestsError('Failed to load Wix guests');
     }
+    setGuestsLoading(false);
+
+    // BO guests
+    const sc = boScreening.status === 'fulfilled' ? boScreening.value : null;
+    setBoScreeningId(sc?.id ?? null);
+    _cache.boScreeningId = sc?.id ?? null;
+    if (sc?.id) {
+      try {
+        const orders = await loadBOGuestsForScreening(sc.id);
+        _cache.boOrders = orders;
+        setBoOrders(orders);
+        // Seed local check-in map
+        const init: Record<string, number> = {};
+        for (const o of orders) for (const l of o.lines) init[l.lineId] = l.checkedInQty;
+        setBoCheckedIn(init);
+      } catch { /* non-fatal */ }
+    } else {
+      setBoOrders([]);
+    }
+    setBoLoading(false);
   }
+
+  const refreshBO = useCallback(async () => {
+    if (!boScreeningId) return;
+    setBoLoading(true);
+    try {
+      const orders = await loadBOGuestsForScreening(boScreeningId);
+      _cache.boOrders = orders;
+      setBoOrders(orders);
+      const init: Record<string, number> = {};
+      for (const o of orders) for (const l of o.lines) init[l.lineId] = l.checkedInQty;
+      setBoCheckedIn(init);
+    } catch { /* ignore */ } finally {
+      setBoLoading(false);
+    }
+  }, [boScreeningId]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -96,20 +157,31 @@ export function GuestListTab() {
     });
   }, [guests, search]);
 
-  // Count fully checked-in orders
+  const filteredBO = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return boOrders;
+    return boOrders.filter((o) => {
+      const name = (o.customerName ?? '').toLowerCase();
+      const lines = o.lines.map((l) => (l.patronName ?? '') + ' ' + l.label).join(' ').toLowerCase();
+      return name.includes(q) || lines.includes(q);
+    });
+  }, [boOrders, search]);
+
   const totalCheckedIn = useMemo(() => guests.filter((g) => g.checkedIn).length, [guests]);
-  // Count individual checked-in tickets
   const ticketsCheckedIn = useMemo(() =>
     guests.reduce((sum, g) => sum + g.tickets.filter((t) => t.checkedIn).length, 0), [guests]);
   const ticketsTotal = useMemo(() =>
     guests.reduce((sum, g) => sum + g.tickets.length, 0), [guests]);
 
+  const boTicketsTotal = useMemo(() =>
+    boOrders.reduce((sum, o) => sum + o.lines.reduce((s, l) => s + l.qty, 0), 0), [boOrders]);
+  const boTicketsIn = useMemo(() =>
+    Object.values(boCheckedIn).reduce((s, n) => s + n, 0), [boCheckedIn]);
+
   async function checkInTicket(guest: GuestRecord, ticket: GuestTicket) {
     if (!selectedEventId || ticket.checkedIn || ticketBusy[ticket.number]) return;
-
     setTicketBusy((prev) => ({ ...prev, [ticket.number]: true }));
     setTicketError((prev) => { const n = { ...prev }; delete n[ticket.number]; return n; });
-
     try {
       const res = await fetch('/api/wix-checkin', {
         method: 'POST',
@@ -120,8 +192,6 @@ export function GuestListTab() {
         const body = await res.json() as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-
-      // Optimistic update: mark this ticket checked in, recompute order checkedIn
       setGuests((prev) => {
         const updated = prev.map((g) => {
           if (g.id !== guest.id) return g;
@@ -130,14 +200,11 @@ export function GuestListTab() {
           );
           return { ...g, tickets: newTickets, checkedIn: newTickets.every((t) => t.checkedIn) };
         });
-        _cache.guests = updated; // keep cache in sync
+        _cache.guests = updated;
         return updated;
       });
     } catch (e: unknown) {
-      setTicketError((prev) => ({
-        ...prev,
-        [ticket.number]: e instanceof Error ? e.message : 'Failed',
-      }));
+      setTicketError((prev) => ({ ...prev, [ticket.number]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
       setTicketBusy((prev) => ({ ...prev, [ticket.number]: false }));
     }
@@ -159,6 +226,8 @@ export function GuestListTab() {
               _cache.selectedEventId = id;
               setSelectedEventId(id);
               setSearch('');
+              setBoOrders([]);
+              setBoCheckedIn({});
             }}
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm"
           >
@@ -176,24 +245,27 @@ export function GuestListTab() {
         <div className="text-sm text-slate-500 text-center py-4">Select an event above to see the guest list.</div>
       )}
 
-      {guestsLoading && (
+      {(guestsLoading || boLoading) && (
         <div className="text-sm text-slate-400 text-center py-6">Loading guests…</div>
       )}
 
       {guestsError && (
         <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-lg">
           {guestsError}
-          <button onClick={() => loadGuests(selectedEventId)} className="ml-3 underline text-red-300 hover:text-red-100">Retry</button>
+          <button onClick={() => loadGuests(selectedEventId)} className="ml-3 underline text-red-300">Retry</button>
         </div>
       )}
 
-      {!guestsLoading && !guestsError && selectedEventId && guests.length > 0 && (
+      {!guestsLoading && !boLoading && selectedEventId && (guests.length > 0 || boOrders.length > 0) && (
         <>
-          {/* Stats + search */}
+          {/* Stats bar + search */}
           <div className="flex items-center gap-2">
-            <div className="text-xs text-slate-400 shrink-0 text-right leading-tight">
-              <div>{ticketsCheckedIn}/{ticketsTotal} tkts in</div>
-              <div className="text-slate-600">{totalCheckedIn}/{guests.length} orders</div>
+            <div className="text-xs text-slate-400 shrink-0 leading-tight">
+              <div>
+                <span className="text-slate-300 font-semibold">{ticketsCheckedIn + boTicketsIn}</span>
+                <span className="text-slate-500">/{ticketsTotal + boTicketsTotal} in</span>
+              </div>
+              <div className="text-slate-600">{totalCheckedIn}/{guests.length} Wix · {boOrders.length} BO</div>
             </div>
             <input
               type="search"
@@ -205,9 +277,9 @@ export function GuestListTab() {
               autoCorrect="off"
             />
             <button
-              onClick={() => loadGuests(selectedEventId)}
+              onClick={() => { loadGuests(selectedEventId); }}
               className="text-xs text-slate-400 hover:text-slate-200 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5"
-              title="Refresh"
+              title="Refresh all"
             >↺</button>
           </div>
 
@@ -218,80 +290,180 @@ export function GuestListTab() {
             </div>
           )}
 
-          {filtered.length === 0 ? (
-            <div className="text-sm text-slate-500 text-center py-4">No guests match "{search}"</div>
-          ) : (
-            <ul className="space-y-1.5">
-              {filtered.map((guest) => {
-                const allIn     = guest.tickets.every((t) => t.checkedIn);
-                const someIn    = !allIn && guest.tickets.some((t) => t.checkedIn);
-                const name      = guest.lastName
-                  ? `${guest.lastName}, ${guest.firstName}`
-                  : guest.firstName || '—';
-
-                return (
-                  <li
-                    key={guest.id}
-                    className={`rounded-xl border overflow-hidden ${
+          {/* ── Wix Online section ── */}
+          {filtered.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-1">
+                🎟 Wix Online · {ticketsCheckedIn}/{ticketsTotal} tickets in
+              </div>
+              <ul className="space-y-1.5">
+                {filtered.map((guest) => {
+                  const allIn  = guest.tickets.every((t) => t.checkedIn);
+                  const someIn = !allIn && guest.tickets.some((t) => t.checkedIn);
+                  const name   = guest.lastName
+                    ? `${guest.lastName}, ${guest.firstName}`
+                    : guest.firstName || '—';
+                  return (
+                    <li key={guest.id} className={`rounded-xl border overflow-hidden ${
                       allIn  ? 'border-emerald-800 bg-emerald-950/60' :
                       someIn ? 'border-amber-800 bg-amber-950/30' :
                                'border-slate-700 bg-slate-800'
-                    }`}
-                  >
-                    {/* Name header */}
-                    <div className={`px-3 pt-2.5 pb-1 font-semibold text-sm ${
-                      allIn ? 'text-emerald-300' : someIn ? 'text-amber-300' : 'text-white'
                     }`}>
-                      {name}
-                      {allIn && <span className="ml-2 text-emerald-400 text-xs font-normal">✓ all in</span>}
-                      {someIn && <span className="ml-2 text-amber-400 text-xs font-normal">partial</span>}
-                    </div>
-
-                    {/* Per-ticket rows */}
-                    <div className="px-2 pb-2 space-y-1">
-                      {guest.tickets.map((ticket) => {
-                        const busy  = ticketBusy[ticket.number] ?? false;
-                        const err   = ticketError[ticket.number];
-                        const suffix = guest.tickets.length > 1
-                          ? ` #${ticket.number.slice(-4)}`
-                          : '';
-                        return (
-                          <div
-                            key={ticket.number}
-                            className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 ${
+                      <div className={`px-3 pt-2.5 pb-1 font-semibold text-sm ${
+                        allIn ? 'text-emerald-300' : someIn ? 'text-amber-300' : 'text-white'
+                      }`}>
+                        {name}
+                        {allIn  && <span className="ml-2 text-emerald-400 text-xs font-normal">✓ all in</span>}
+                        {someIn && <span className="ml-2 text-amber-400 text-xs font-normal">partial</span>}
+                      </div>
+                      <div className="px-2 pb-2 space-y-1">
+                        {guest.tickets.map((ticket) => {
+                          const busy   = ticketBusy[ticket.number] ?? false;
+                          const errMsg = ticketError[ticket.number];
+                          const suffix = guest.tickets.length > 1 ? ` #${ticket.number.slice(-4)}` : '';
+                          return (
+                            <div key={ticket.number} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 ${
                               ticket.checkedIn ? 'bg-emerald-900/40' : 'bg-slate-900/60'
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <span className="text-xs text-slate-300">
-                                {ticket.typeName}{suffix}
-                              </span>
-                              {err && <div className="text-xs text-red-400">{err}</div>}
+                            }`}>
+                              <div className="min-w-0 flex-1">
+                                <span className="text-xs text-slate-300">{ticket.typeName}{suffix}</span>
+                                {errMsg && <div className="text-xs text-red-400">{errMsg}</div>}
+                              </div>
+                              {ticket.checkedIn ? (
+                                <span className="text-emerald-400 text-sm shrink-0">✓</span>
+                              ) : (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => checkInTicket(guest, ticket)}
+                                  className="shrink-0 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold px-3 py-1 rounded-lg"
+                                >
+                                  {busy ? '…' : 'Check In'}
+                                </button>
+                              )}
                             </div>
-                            {ticket.checkedIn ? (
-                              <span className="text-emerald-400 text-sm shrink-0">✓</span>
-                            ) : (
-                              <button
-                                disabled={busy}
-                                onClick={() => checkInTicket(guest, ticket)}
-                                className="shrink-0 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold px-3 py-1 rounded-lg"
-                              >
-                                {busy ? '…' : 'Check In'}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                          );
+                        })}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {/* ── Box Office Sales section ── */}
+          {filteredBO.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-1 flex items-center justify-between">
+                <span>📱 Box Office · {boTicketsIn}/{boTicketsTotal} tickets in</span>
+                {boLoading && <span className="text-slate-600 normal-case font-normal">refreshing…</span>}
+                {!boLoading && boScreeningId && (
+                  <button onClick={refreshBO} className="text-slate-600 hover:text-slate-400 normal-case font-normal">↺ refresh</button>
+                )}
+              </div>
+              <ul className="space-y-1.5">
+                {filteredBO.map((order) => {
+                  const totalQty = order.lines.reduce((s, l) => s + l.qty, 0);
+                  const inQty    = order.lines.reduce((s, l) => s + (boCheckedIn[l.lineId] ?? l.checkedInQty), 0);
+                  const allIn    = inQty >= totalQty;
+                  const someIn   = inQty > 0 && !allIn;
+                  const name     = order.customerName ?? order.lines.find((l) => l.patronName)?.patronName ?? 'Guest';
+                  const sourceBadge = order.source === 'external_heartland'
+                    ? <span className="ml-1.5 text-[10px] text-indigo-400 font-normal bg-indigo-900/40 px-1.5 py-0.5 rounded">CC</span>
+                    : <span className="ml-1.5 text-[10px] text-emerald-400 font-normal bg-emerald-900/30 px-1.5 py-0.5 rounded">Cash</span>;
+
+                  return (
+                    <li key={order.orderId} className={`rounded-xl border overflow-hidden ${
+                      allIn  ? 'border-emerald-800 bg-emerald-950/60' :
+                      someIn ? 'border-amber-800 bg-amber-950/30' :
+                               'border-slate-700 bg-slate-800'
+                    }`}>
+                      <div className={`px-3 pt-2.5 pb-1 font-semibold text-sm flex items-center ${
+                        allIn ? 'text-emerald-300' : someIn ? 'text-amber-300' : 'text-white'
+                      }`}>
+                        <span className="flex-1 truncate">{name}</span>
+                        {sourceBadge}
+                        {allIn  && <span className="ml-2 text-emerald-400 text-xs font-normal shrink-0">✓ all in</span>}
+                        {someIn && <span className="ml-2 text-amber-400 text-xs font-normal shrink-0">{inQty}/{totalQty}</span>}
+                      </div>
+                      <div className="px-2 pb-2 space-y-1">
+                        {order.lines.map((line) => {
+                          const curIn  = boCheckedIn[line.lineId] ?? line.checkedInQty;
+                          const lineFull = curIn >= line.qty;
+                          const busy   = boLineBusy[line.lineId] ?? false;
+                          const displayName = line.patronName && line.patronName !== order.customerName
+                            ? `${line.label} — ${line.patronName}`
+                            : line.label;
+                          return (
+                            <div key={line.lineId} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 ${
+                              lineFull ? 'bg-emerald-900/40' : curIn > 0 ? 'bg-amber-900/20' : 'bg-slate-900/60'
+                            }`}>
+                              <div className="min-w-0 flex-1">
+                                <span className="text-xs text-slate-300">{displayName}</span>
+                                {line.qty > 1 && (
+                                  <span className="text-xs text-slate-500 ml-1">×{line.qty}</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {lineFull ? (
+                                  <span className="text-emerald-400 text-xs font-semibold">
+                                    ✓{line.qty > 1 ? ` all ${line.qty}` : ''}
+                                  </span>
+                                ) : curIn > 0 ? (
+                                  <span className="text-amber-300 text-xs font-semibold tabular-nums">{curIn}/{line.qty}</span>
+                                ) : null}
+                                {curIn > 0 && (
+                                  <button
+                                    disabled={busy}
+                                    onClick={async () => {
+                                      setBoLineBusy((p) => ({ ...p, [line.lineId]: true }));
+                                      try {
+                                        await uncheckInOne(line.lineId, curIn);
+                                        setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn - 1 }));
+                                      } catch { /* ignore */ } finally {
+                                        setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
+                                      }
+                                    }}
+                                    className="w-7 h-7 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold rounded-lg text-sm"
+                                  >−</button>
+                                )}
+                                {!lineFull && (
+                                  <button
+                                    disabled={busy || !user}
+                                    onClick={async () => {
+                                      if (!user) return;
+                                      setBoLineBusy((p) => ({ ...p, [line.lineId]: true }));
+                                      try {
+                                        await checkInOne(line.lineId, user.name, curIn, line.qty);
+                                        setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn + 1 }));
+                                      } catch { /* ignore */ } finally {
+                                        setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
+                                      }
+                                    }}
+                                    className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold px-2.5 py-1 rounded-lg"
+                                  >
+                                    {busy ? '…' : line.qty > 1 ? '+1' : 'Check In'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {filtered.length === 0 && filteredBO.length === 0 && search && (
+            <div className="text-sm text-slate-500 text-center py-4">No guests match "{search}"</div>
           )}
         </>
       )}
 
-      {!guestsLoading && !guestsError && selectedEventId && guests.length === 0 && (
+      {!guestsLoading && !boLoading && selectedEventId && guests.length === 0 && boOrders.length === 0 && (
         <div className="text-sm text-slate-500 text-center py-6">No guests found for this event.</div>
       )}
     </div>

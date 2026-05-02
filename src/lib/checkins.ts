@@ -152,3 +152,57 @@ export async function lookupScreeningByWixId(wixEventId: string): Promise<{ id: 
     .maybeSingle();
   return data as { id: string; title: string; starts_at: string } | null;
 }
+
+/** A single order_line from a BO order, grouped for the guest list. */
+export interface BOGuestLine {
+  lineId: string;
+  label: string;
+  qty: number;
+  checkedInQty: number;   // checked_in_qty (0 if column not yet migrated)
+  patronName: string | null;
+}
+
+export interface BOGuestOrder {
+  orderId: string;
+  customerName: string | null;
+  source: 'boxoffice' | 'external_heartland';
+  lines: BOGuestLine[];
+}
+
+/** Load all non-voided BO app order lines for a screening (for the guest list). */
+export async function loadBOGuestsForScreening(screeningId: string): Promise<BOGuestOrder[]> {
+  const { data, error } = await supabase
+    .from('order_lines')
+    .select('id, label, qty, checked_in_qty, checked_in_at, patron_name, order_id, orders(customer_name, source, voided_at)')
+    .eq('screening_id', screeningId)
+    .is('voided_at', null);           // skip voided lines
+  if (error) throw error;
+
+  // Group by order, skip voided orders
+  const byOrder = new Map<string, BOGuestOrder>();
+  type RawRow = {
+    id: string; label: string; qty: number;
+    checked_in_qty: number | null; checked_in_at: string | null;
+    patron_name: string | null; order_id: string;
+    orders: { customer_name: string | null; source: string; voided_at: string | null } | null;
+  };
+  for (const r of (data as unknown as RawRow[]) ?? []) {
+    if (r.orders?.voided_at) continue; // skip voided orders
+    const order = byOrder.get(r.order_id) ?? {
+      orderId: r.order_id,
+      customerName: r.orders?.customer_name ?? null,
+      source: (r.orders?.source ?? 'boxoffice') as 'boxoffice' | 'external_heartland',
+      lines: [],
+    };
+    order.lines.push({
+      lineId: r.id,
+      label: r.label,
+      qty: r.qty,
+      // Fall back to checked_in_at for rows pre-dating the checked_in_qty migration
+      checkedInQty: r.checked_in_qty ?? (r.checked_in_at ? r.qty : 0),
+      patronName: r.patron_name,
+    });
+    byOrder.set(r.order_id, order);
+  }
+  return Array.from(byOrder.values());
+}
