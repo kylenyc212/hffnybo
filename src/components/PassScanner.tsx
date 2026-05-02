@@ -67,8 +67,8 @@ export function PassScanner({ onClose, onFound }: Props) {
     setUnknownBarcode(null);
     try {
       const ph = await lookupPassholder(code);
-      if (!ph) {
-        // Unknown barcode — show registration form
+      if (!ph || !ph.name.trim()) {
+        // Unknown barcode OR pre-seeded pass with no name — show registration form
         setUnknownBarcode(code);
         setRegName('');
         setRegEmail('');

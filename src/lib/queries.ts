@@ -94,7 +94,8 @@ async function loadAllPassholdersCached(): Promise<PassholderRow[]> {
   });
 }
 
-/** Register a new passholder (unknown barcode). Busts the local cache. */
+/** Register or name a passholder. Uses UPSERT so pre-seeded (nameless) rows
+ *  get their name filled in rather than failing on a unique-barcode conflict. */
 export async function createPassholder(params: {
   barcode: string;
   name: string;
@@ -102,11 +103,14 @@ export async function createPassholder(params: {
 }): Promise<PassholderRow> {
   const { data, error } = await supabase
     .from('passholders')
-    .insert({ barcode: params.barcode.trim(), name: params.name.trim(), email: params.email?.trim() || null })
+    .upsert(
+      { barcode: params.barcode.trim(), name: params.name.trim(), email: params.email?.trim() || null },
+      { onConflict: 'barcode' }
+    )
     .select('id, name, email, barcode, synced_at')
     .single();
   if (error) throw error;
-  // Clear cache so subsequent scans see the new row
+  // Clear cache so subsequent scans see the updated row
   cache.clear(CacheKeys.passholders);
   return data as PassholderRow;
 }
