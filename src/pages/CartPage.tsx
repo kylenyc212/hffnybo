@@ -40,6 +40,10 @@ export function CartPage() {
   const [emailResult, setEmailResult] = useState<'sent' | 'error' | null>(null);
   const [payMethod, setPayMethod] = useState<'cash' | 'external'>('cash');
   const [externalRef, setExternalRef] = useState('');
+  // CC paste state
+  const [ccPasteText, setCcPasteText] = useState('');
+  const [ccParsed, setCcParsed] = useState<ParsedHeartlandReceipt | null>(null);
+  const [ccPriceUpdates, setCcPriceUpdates] = useState<{ key: string; label: string; oldCents: number; newCents: number }[]>([]);
 
   // Optional customer contact info (visible by default so cashier sees the option)
   const [contactOpen, setContactOpen] = useState(true);
@@ -103,6 +107,45 @@ export function CartPage() {
     if (extra?.email !== undefined && !cEmail && extra.email) {
       setCEmail(extra.email);
     }
+  }
+
+  // Parse a pasted Heartland receipt in the CC section:
+  // fills invoice ref, and reconciles cart item prices with what Heartland charged.
+  function applyReceiptToCart(text: string) {
+    const receipt = parseHeartlandReceipt(text);
+    setCcParsed(receipt);
+    // Set invoice ref
+    const ref = receipt.invoiceNumber || receipt.receiptNumber;
+    if (ref) setExternalRef(ref);
+
+    // Match each receipt item to a cart line and collect price diffs
+    const updates: { key: string; label: string; oldCents: number; newCents: number }[] = [];
+    const usedKeys = new Set<string>();
+    for (const item of receipt.items) {
+      const rawLower = item.rawName.toLowerCase().trim();
+      // Score each cart line; pick best unmatched
+      let bestLine: CartLine | null = null;
+      let bestScore = 0;
+      for (const l of lines) {
+        if (usedKeys.has(l.key)) continue;
+        const labelLower = l.label.toLowerCase();
+        const titleLower = l.screeningTitle.toLowerCase();
+        let score = 0;
+        if (rawLower === labelLower) score = 4;                          // exact label
+        else if (rawLower.includes(labelLower)) score = 3;               // rawName contains label
+        else if (labelLower.includes(rawLower)) score = 2;               // label contains rawName
+        else if (titleLower.split(' ').some((w) => w.length > 2 && rawLower.includes(w))) score = 1; // title word
+        if (score > bestScore) { bestScore = score; bestLine = l; }
+      }
+      if (bestLine && bestScore > 0) {
+        usedKeys.add(bestLine.key);
+        if (bestLine.unitPriceCents !== item.unitPriceCents) {
+          updates.push({ key: bestLine.key, label: bestLine.label, oldCents: bestLine.unitPriceCents, newCents: item.unitPriceCents });
+          useCart.getState().updateLine(bestLine.key, { unitPriceCents: item.unitPriceCents });
+        }
+      }
+    }
+    setCcPriceUpdates(updates);
   }
 
   useEffect(() => {
@@ -176,6 +219,7 @@ export function CartPage() {
       setPayMethod('cash');
       setCName(''); setCEmail(''); setCPhone(''); setCAddress('');
       setContactOpen(true);
+      setCcPasteText(''); setCcParsed(null); setCcPriceUpdates([]);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Checkout failed');
     } finally {
@@ -561,32 +605,74 @@ export function CartPage() {
                   </button>
                 </div>
                 {isExternal && (
-                  <div className="mt-3 bg-slate-900 border border-slate-700 rounded-lg p-3 space-y-3">
-                    <div className="text-xs text-slate-400">
-                      Charge on Heartland first, then record the details below.
-                    </div>
-                    <label className="block">
-                      <div className="text-xs font-semibold text-slate-300 mb-1">Customer name</div>
-                      <input
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
-                        placeholder="As it appears on Heartland receipt"
-                        value={cName}
-                        onChange={(e) => setCName(e.target.value)}
-                        onBlur={(e) => applyCustomerNameToCompLines(e.target.value)}
-                        autoCapitalize="words"
-                      />
-                    </label>
-                    <label className="block">
-                      <div className="text-xs font-semibold text-slate-300 mb-1">Heartland order / receipt #</div>
-                      <input
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono"
-                        placeholder="e.g. 123456"
-                        value={externalRef}
-                        onChange={(e) => setExternalRef(e.target.value)}
-                        autoCapitalize="off"
-                        autoCorrect="off"
-                      />
-                    </label>
+                  <div className="mt-3 bg-slate-900 border border-indigo-800 rounded-lg p-3 space-y-3">
+                    {/* Paste area */}
+                    {!ccParsed ? (
+                      <>
+                        <div className="text-xs text-slate-400">
+                          Charge on Heartland first, then paste the receipt to sync prices and invoice #.
+                        </div>
+                        <textarea
+                          autoFocus
+                          className="w-full h-28 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 resize-none"
+                          placeholder="Long-press → Paste receipt text here…"
+                          value={ccPasteText}
+                          onChange={(e) => {
+                            const text = e.target.value;
+                            setCcPasteText(text);
+                            if (text.trim().length > 20) {
+                              applyReceiptToCart(text);
+                            }
+                          }}
+                        />
+                      </>
+                    ) : (
+                      /* Parsed summary */
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold text-indigo-300">
+                            ✓ Receipt parsed
+                            {ccParsed.invoiceNumber && (
+                              <span className="text-slate-400 font-normal ml-2 font-mono">Invoice #{ccParsed.invoiceNumber}</span>
+                            )}
+                            {ccParsed.cardBrand && (
+                              <span className="text-slate-500 font-normal ml-2">{ccParsed.cardBrand}{ccParsed.cardLast4 ? ` ···· ${ccParsed.cardLast4}` : ''}</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => { setCcParsed(null); setCcPasteText(''); setCcPriceUpdates([]); setExternalRef(''); }}
+                            className="text-xs text-slate-500 hover:text-red-400"
+                          >✕ clear</button>
+                        </div>
+                        {ccPriceUpdates.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-amber-400 font-semibold">Prices updated to match receipt:</div>
+                            {ccPriceUpdates.map((u) => (
+                              <div key={u.key} className="text-xs text-slate-300 flex justify-between gap-2">
+                                <span className="truncate">{u.label}</span>
+                                <span className="tabular-nums shrink-0 text-amber-300">
+                                  {money(u.oldCents)} → {money(u.newCents)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {ccPriceUpdates.length === 0 && (
+                          <div className="text-xs text-emerald-400">Prices already match — no changes needed.</div>
+                        )}
+                        {/* Manual ref override */}
+                        <div>
+                          <div className="text-xs text-slate-500 mb-1">Invoice # <span className="text-slate-600">(tap to edit)</span></div>
+                          <input
+                            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm font-mono"
+                            value={externalRef}
+                            onChange={(e) => setExternalRef(e.target.value)}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -644,7 +730,11 @@ export function CartPage() {
                 )}
               </>
             ) : isExternal ? (
-              <div className="text-sm text-slate-400 mb-3">External (CC) order — charge on Heartland terminal first, then tap Record.</div>
+              <div className="text-sm text-slate-400 mb-3">
+                {ccParsed
+                  ? `Heartland receipt matched — ${money(subtotalCents)} will be recorded as CC sale.`
+                  : 'Paste the Heartland receipt above, then tap Record.'}
+              </div>
             ) : (
               <div className="text-sm text-slate-400 mb-3">Comp-only order — no cash collected.</div>
             )}
