@@ -239,6 +239,9 @@ export function CatalogPage() {
                           >
                             <span className="text-xs mr-1">{open ? '▾' : '▸'}</span>
                             {fmtTime(s.starts_at)} · {s.title}
+                            {s.checkin_count > 0 && (
+                              <span className="ml-1.5 text-orange-400 font-normal">{s.checkin_count} ✓</span>
+                            )}
                           </button>
                         );
                       })}
