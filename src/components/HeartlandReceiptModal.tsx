@@ -15,6 +15,7 @@ import type {
 import { checkout } from '../lib/checkout';
 import { getCheckinLinesForOrder, checkInOrderLine } from '../lib/checkins';
 import type { OrderLineWithScreening } from '../lib/checkins';
+import { sendReceiptEmail } from '../lib/email';
 import { useSession } from '../lib/session';
 
 interface Props {
@@ -29,13 +30,19 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
   const [loading, setLoading]     = useState(true);
   const [err, setErr]             = useState<string | null>(null);
   const [cName, setCName]         = useState('');
+  const [cEmail, setCEmail]       = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess]     = useState<{
     totalCents: number;
     synced: boolean;
+    emailTo: string | null;
+    finalMatched: MatchedItem[];
   } | null>(null);
   const [checkinLines, setCheckinLines]   = useState<OrderLineWithScreening[]>([]);
   const [checkingIn, setCheckingIn]       = useState(false);
+  const [emailSending, setEmailSending]   = useState(false);
+  const [emailSent, setEmailSent]         = useState(false);
+  const [emailErr, setEmailErr]           = useState<string | null>(null);
 
   // Catalog for manual-match dropdowns
   const [catalog, setCatalog] = useState<{ ticketTypes: TTypeRow[]; screenings: SRow[] } | null>(null);
@@ -100,9 +107,15 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
         source: 'external_heartland',
         externalRef: receipt.receiptNumber || receipt.invoiceNumber || null,
         customerName: cName.trim() || null,
+        customerEmail: cEmail.trim() || null,
       });
 
-      setSuccess({ totalCents: result.subtotalCents, synced: result.synced });
+      setSuccess({
+        totalCents: result.subtotalCents,
+        synced: result.synced,
+        emailTo: cEmail.trim() || null,
+        finalMatched,
+      });
 
       // Auto-check in all lines so the cashier doesn't have to tap again
       if (result.synced) {
@@ -124,6 +137,37 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
 
   const finalMatched = buildFinalMatched();
   const stillUnmatched = finalMatched.filter((m) => !m.matched).length;
+
+  async function sendReceipt(toEmail: string) {
+    if (!success || !user || emailSending) return;
+    setEmailSending(true);
+    setEmailErr(null);
+    try {
+      const items = success.finalMatched
+        .filter((m) => m.matched)
+        .map((m) => ({
+          label: m.label,
+          screeningTitle: m.screeningTitle,
+          qty: m.raw.qty,
+          unitPriceCents: m.raw.unitPriceCents,
+        }));
+      await sendReceiptEmail({
+        to: toEmail,
+        orderRef: receipt.receiptNumber || receipt.invoiceNumber || null,
+        cashierName: user.name,
+        items,
+        totalCents: success.totalCents,
+        payMethod: 'external',
+        cardBrand: receipt.cardBrand || null,
+        cardLast4: receipt.cardLast4 || null,
+      });
+      setEmailSent(true);
+    } catch (e: unknown) {
+      setEmailErr(e instanceof Error ? e.message : 'Failed to send');
+    } finally {
+      setEmailSending(false);
+    }
+  }
 
   // ── Success screen ──────────────────────────────────────────────────────────
   if (success) {
@@ -189,6 +233,15 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
               )}
             </div>
           )}
+
+          {/* Receipt email */}
+          <ReceiptEmailPanel
+            initialEmail={success.emailTo}
+            sent={emailSent}
+            sending={emailSending}
+            emailErr={emailErr}
+            onSend={sendReceipt}
+          />
 
           <button
             onClick={onClose}
@@ -360,19 +413,36 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           </div>
         )}
 
-        {/* Optional customer name */}
+        {/* Customer name + email */}
         {matched && matched.length > 0 && (
-          <div>
-            <div className="text-xs font-semibold text-slate-300 mb-1">
-              Customer name <span className="font-normal text-slate-500">(optional)</span>
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-300 mb-1">
+                Customer name <span className="font-normal text-slate-500">(optional)</span>
+              </div>
+              <input
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                placeholder="As shown on Heartland receipt"
+                value={cName}
+                onChange={(e) => setCName(e.target.value)}
+                autoCapitalize="words"
+              />
             </div>
-            <input
-              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
-              placeholder="As shown on Heartland receipt"
-              value={cName}
-              onChange={(e) => setCName(e.target.value)}
-              autoCapitalize="words"
-            />
+            <div>
+              <div className="text-xs font-semibold text-slate-300 mb-1">
+                Email <span className="font-normal text-slate-500">(optional — to send receipt)</span>
+              </div>
+              <input
+                type="email"
+                inputMode="email"
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                placeholder="customer@email.com"
+                value={cEmail}
+                onChange={(e) => setCEmail(e.target.value)}
+              />
+            </div>
           </div>
         )}
 
@@ -395,6 +465,60 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Inline receipt-email panel used on the success screen ───────────────────
+
+function ReceiptEmailPanel({
+  initialEmail,
+  sent,
+  sending,
+  emailErr,
+  onSend,
+}: {
+  initialEmail: string | null;
+  sent: boolean;
+  sending: boolean;
+  emailErr: string | null;
+  onSend: (email: string) => void;
+}) {
+  const [emailInput, setEmailInput] = useState(initialEmail ?? '');
+
+  if (sent) {
+    return (
+      <div className="bg-slate-800 border border-emerald-800 rounded-xl px-4 py-3 flex items-center gap-2 text-sm">
+        <span className="text-emerald-400 text-base">✓</span>
+        <span className="text-slate-200">Receipt sent to <span className="font-semibold">{emailInput}</span></span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 space-y-2">
+      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Send receipt</div>
+      <div className="flex gap-2">
+        <input
+          type="email"
+          inputMode="email"
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+          placeholder="customer@email.com"
+          value={emailInput}
+          onChange={(e) => setEmailInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && emailInput.includes('@')) onSend(emailInput); }}
+        />
+        <button
+          disabled={sending || !emailInput.includes('@')}
+          onClick={() => onSend(emailInput)}
+          className="bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+        >
+          {sending ? '…' : '📧 Send'}
+        </button>
+      </div>
+      {emailErr && <div className="text-xs text-red-400">{emailErr}</div>}
     </div>
   );
 }
