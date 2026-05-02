@@ -386,65 +386,51 @@ export function GuestListTab() {
                         {allIn  && <span className="ml-2 text-emerald-400 text-xs font-normal shrink-0">✓ all in</span>}
                         {someIn && <span className="ml-2 text-amber-400 text-xs font-normal shrink-0">{inQty}/{totalQty}</span>}
                       </div>
-                      <div className="px-2 pb-2 space-y-1">
+                      <div className="px-2 pb-2 space-y-2">
                         {order.lines.map((line) => {
-                          const curIn  = boCheckedIn[line.lineId] ?? line.checkedInQty;
-                          const lineFull = curIn >= line.qty;
-                          const busy   = boLineBusy[line.lineId] ?? false;
+                          const curIn = boCheckedIn[line.lineId] ?? line.checkedInQty;
+                          const busy  = boLineBusy[line.lineId] ?? false;
                           const displayName = line.patronName && line.patronName !== order.customerName
                             ? `${line.label} — ${line.patronName}`
                             : line.label;
                           return (
-                            <div key={line.lineId} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 ${
-                              lineFull ? 'bg-emerald-900/40' : curIn > 0 ? 'bg-amber-900/20' : 'bg-slate-900/60'
-                            }`}>
-                              <div className="min-w-0 flex-1">
-                                <span className="text-xs text-slate-300">{displayName}</span>
-                                {line.qty > 1 && (
-                                  <span className="text-xs text-slate-500 ml-1">×{line.qty}</span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {lineFull ? (
-                                  <span className="text-emerald-400 text-xs font-semibold">
-                                    ✓{line.qty > 1 ? ` all ${line.qty}` : ''}
-                                  </span>
-                                ) : curIn > 0 ? (
-                                  <span className="text-amber-300 text-xs font-semibold tabular-nums">{curIn}/{line.qty}</span>
-                                ) : null}
-                                {curIn > 0 && (
-                                  <button
-                                    disabled={busy}
-                                    onClick={async () => {
-                                      setBoLineBusy((p) => ({ ...p, [line.lineId]: true }));
-                                      try {
-                                        await uncheckInOne(line.lineId, curIn);
-                                        setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn - 1 }));
-                                      } catch { /* ignore */ } finally {
-                                        setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
-                                      }
-                                    }}
-                                    className="w-7 h-7 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold rounded-lg text-sm"
-                                  >−</button>
-                                )}
-                                {!lineFull && (
-                                  <button
-                                    disabled={busy || !user}
-                                    onClick={async () => {
-                                      if (!user) return;
-                                      setBoLineBusy((p) => ({ ...p, [line.lineId]: true }));
-                                      try {
-                                        await checkInOne(line.lineId, user.name, curIn, line.qty);
-                                        setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn + 1 }));
-                                      } catch { /* ignore */ } finally {
-                                        setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
-                                      }
-                                    }}
-                                    className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold px-2.5 py-1 rounded-lg"
-                                  >
-                                    {busy ? '…' : line.qty > 1 ? '+1' : 'Check In'}
-                                  </button>
-                                )}
+                            <div key={line.lineId} className="rounded-lg bg-slate-900/60 px-2 py-2 space-y-1.5">
+                              <div className="text-xs text-slate-400">{displayName}</div>
+                              {/* One badge per ticket slot — green = in, gray = not in */}
+                              <div className="flex flex-wrap gap-1.5">
+                                {Array.from({ length: line.qty }, (_, i) => {
+                                  const isIn = i < curIn;
+                                  return (
+                                    <button
+                                      key={i}
+                                      disabled={busy}
+                                      onClick={async () => {
+                                        if (!user) return;
+                                        setBoLineBusy((p) => ({ ...p, [line.lineId]: true }));
+                                        try {
+                                          if (isIn) {
+                                            // tapping a checked-in slot → undo one
+                                            await uncheckInOne(line.lineId, curIn);
+                                            setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn - 1 }));
+                                          } else {
+                                            // tapping an unchecked slot → check in one more
+                                            await checkInOne(line.lineId, user.name, curIn, line.qty);
+                                            setBoCheckedIn((p) => ({ ...p, [line.lineId]: curIn + 1 }));
+                                          }
+                                        } catch { /* ignore */ } finally {
+                                          setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
+                                        }
+                                      }}
+                                      className={`min-w-[2.5rem] h-9 px-2 rounded-lg text-xs font-bold border transition-colors ${
+                                        isIn
+                                          ? 'bg-emerald-700 border-emerald-600 text-white'
+                                          : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-emerald-600 hover:text-emerald-300'
+                                      } disabled:opacity-50`}
+                                    >
+                                      {isIn ? '✓' : line.qty > 1 ? `${i + 1}` : '✓?'}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </div>
                           );
