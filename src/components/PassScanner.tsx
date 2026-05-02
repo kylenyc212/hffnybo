@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
-import { lookupPassholder } from '../lib/queries';
+import { lookupPassholder, createPassholder } from '../lib/queries';
 
 interface Props {
   onClose: () => void;
@@ -13,6 +13,13 @@ export function PassScanner({ onClose, onFound }: Props) {
   const controlsRef = useRef<{ stop: () => void } | null>(null);
   const [status, setStatus] = useState('Starting camera…');
   const [manual, setManual] = useState('');
+
+  // Registration state — set when a scanned barcode is not in the system
+  const [unknownBarcode, setUnknownBarcode] = useState<string | null>(null);
+  const [regName, setRegName]   = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [saving, setSaving]     = useState(false);
+  const [saveErr, setSaveErr]   = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,10 +56,16 @@ export function PassScanner({ onClose, onFound }: Props) {
 
   async function handleBarcode(code: string) {
     setStatus(`Looking up ${code}…`);
+    setUnknownBarcode(null);
     try {
       const ph = await lookupPassholder(code);
       if (!ph) {
-        setStatus(`No passholder found for barcode "${code}".`);
+        // Unknown barcode — show registration form
+        setUnknownBarcode(code);
+        setRegName('');
+        setRegEmail('');
+        setSaveErr(null);
+        setStatus('');
         return;
       }
       onFound(ph);
@@ -61,6 +74,88 @@ export function PassScanner({ onClose, onFound }: Props) {
     }
   }
 
+  async function registerAndContinue() {
+    if (!unknownBarcode || !regName.trim()) return;
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      const ph = await createPassholder({ barcode: unknownBarcode, name: regName, email: regEmail || null });
+      onFound(ph);
+    } catch (e: unknown) {
+      setSaveErr(e instanceof Error ? e.message : 'Save failed');
+      setSaving(false);
+    }
+  }
+
+  // ── Registration form (unknown barcode) ────────────────────────────────────
+  if (unknownBarcode) {
+    return (
+      <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="font-bold text-lg">Register pass</div>
+            <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
+          </div>
+
+          <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-3">
+            <div className="text-amber-300 text-sm font-semibold mb-0.5">Pass not in system</div>
+            <div className="text-xs text-slate-400 font-mono">{unknownBarcode}</div>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                autoFocus
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                placeholder="Pass holder name"
+                value={regName}
+                onChange={(e) => setRegName(e.target.value)}
+                autoCapitalize="words"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Email <span className="text-slate-500">(optional)</span>
+              </label>
+              <input
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                placeholder="email@example.com"
+                type="email"
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+                autoCapitalize="none"
+              />
+            </div>
+          </div>
+
+          {saveErr && (
+            <div className="text-red-400 text-sm">{saveErr}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => { setUnknownBarcode(null); setStatus('Point camera at pass barcode…'); }}
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl"
+            >
+              Scan again
+            </button>
+            <button
+              disabled={!regName.trim() || saving}
+              onClick={registerAndContinue}
+              className="flex-[2] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-bold py-3 rounded-xl"
+            >
+              {saving ? 'Saving…' : 'Save & continue →'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Normal scanner view ────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-4">

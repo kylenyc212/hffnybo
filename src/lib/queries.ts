@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type { ScreeningRow, TicketTypeRow, PassholderRow } from './database.types';
 import { cachedFetch, CacheKeys } from './cache';
+import * as cache from './cache';
 
 export interface ScreeningWithSold extends ScreeningRow {
   sold_in_person: number;
@@ -91,6 +92,23 @@ async function loadAllPassholdersCached(): Promise<PassholderRow[]> {
     if (error) throw error;
     return (data ?? []) as PassholderRow[];
   });
+}
+
+/** Register a new passholder (unknown barcode). Busts the local cache. */
+export async function createPassholder(params: {
+  barcode: string;
+  name: string;
+  email?: string | null;
+}): Promise<PassholderRow> {
+  const { data, error } = await supabase
+    .from('passholders')
+    .insert({ barcode: params.barcode.trim(), name: params.name.trim(), email: params.email?.trim() || null })
+    .select('id, name, email, barcode, synced_at')
+    .single();
+  if (error) throw error;
+  // Clear cache so subsequent scans see the new row
+  cache.clear(CacheKeys.passholders);
+  return data as PassholderRow;
 }
 
 export async function lookupPassholder(barcode: string): Promise<PassholderRow | null> {
