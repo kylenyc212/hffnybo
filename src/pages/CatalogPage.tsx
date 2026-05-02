@@ -19,6 +19,8 @@ export function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [passesOpen, setPassesOpen] = useState(false);
+  const [merchOpen, setMerchOpen] = useState(false);
   const cartCount = useCart((s) => s.count());
 
   useEffect(() => {
@@ -135,16 +137,57 @@ export function CatalogPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      {/* Always-available items (passes, merch) — no section label */}
-      {alwaysAvailable.length > 0 && (
-        <section className="mb-6">
-          <div className="space-y-3">
-            {alwaysAvailable.map((s) => (
-              <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+      {/* Always-available items — collapsed behind toggle buttons */}
+      {alwaysAvailable.length > 0 && (() => {
+        const passScreening = alwaysAvailable.find(s => s.short_code === 'PASSES');
+        const merchScreening = alwaysAvailable.find(s => s.short_code === 'MERCH');
+        const otherAlways = alwaysAvailable.filter(s => s.short_code !== 'PASSES' && s.short_code !== 'MERCH');
+        return (
+          <section className="mb-4">
+            <div className="flex gap-2 mb-2">
+              {passScreening && (
+                <button
+                  onClick={() => setPassesOpen(o => !o)}
+                  className={`flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm border transition-colors ${
+                    passesOpen
+                      ? 'bg-amber-700 border-amber-600 text-white'
+                      : 'bg-slate-800 border-amber-700/60 text-amber-300 hover:bg-slate-700'
+                  }`}
+                >
+                  🎟 Festival Passes {passesOpen ? '▲' : '▼'}
+                </button>
+              )}
+              {merchScreening && (
+                <button
+                  onClick={() => setMerchOpen(o => !o)}
+                  className={`flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm border transition-colors ${
+                    merchOpen
+                      ? 'bg-amber-700 border-amber-600 text-white'
+                      : 'bg-slate-800 border-amber-700/60 text-amber-300 hover:bg-slate-700'
+                  }`}
+                >
+                  🛍 Merchandise {merchOpen ? '▲' : '▼'}
+                </button>
+              )}
+            </div>
+            {passesOpen && passScreening && (
+              <div className="mb-2">
+                <ScreeningCard screening={passScreening} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+              </div>
+            )}
+            {merchOpen && merchScreening && (
+              <div className="mb-2">
+                <ScreeningCard screening={merchScreening} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+              </div>
+            )}
+            {otherAlways.map(s => (
+              <div key={s.id} className="mb-2">
+                <ScreeningCard screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+              </div>
             ))}
-          </div>
-        </section>
-      )}
+          </section>
+        );
+      })()}
 
       {grouped.length === 0 && alwaysAvailable.length === 0 ? (
         <div className="text-slate-400">No upcoming screenings.</div>

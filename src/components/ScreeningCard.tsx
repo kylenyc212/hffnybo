@@ -13,6 +13,12 @@ interface Props {
   onCheckedIn?: (screeningId: string) => void;
 }
 
+/** Shorten or rename labels for display only (DB values are unchanged). */
+function displayLabel(label: string): string {
+  if (label === 'General Admission') return 'General Admin';
+  return label;
+}
+
 export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
   const addLine = useCart((s) => s.addLine);
   const { user } = useSession();
@@ -129,7 +135,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
               onClick={() => addOne(t)}
               className="bg-slate-900 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-3 text-left disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <div className="text-xs text-slate-400">{t.label}</div>
+              <div className="text-xs text-slate-400">{displayLabel(t.label)}</div>
               <div className="font-bold">{money(t.price_cents)}</div>
             </button>
           ))}
@@ -195,7 +201,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
             >
               <div className="text-xs text-slate-400">Comp</div>
               <div className="font-semibold text-sm">
-                {t.label.replace(/^Comp\s*[—-]\s*/, '')}
+                {t.label.replace(/^Comp\s*[—-]\s*/, '').replace('Pass Holder', 'Pass')}
               </div>
             </button>
           ))}
