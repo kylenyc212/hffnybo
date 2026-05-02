@@ -172,6 +172,30 @@ export function CheckInPage() {
         return;
       }
       const t = (data.ticket ?? data) as WixTicket;
+
+      // Guard: if the response has no recognisable Wix ticket fields, this is
+      // almost certainly a pass/staff barcode (or other non-Wix code) that the
+      // API echoed back with a 200. Reject it immediately so the camera resets.
+      const looksLikeWixTicket = !!(
+        t.guestFullName ||
+        t.orderFullName ||
+        t.guestDetails?.firstName ||
+        t.guestDetails?.email ||
+        t.eventId ||
+        t.status ||
+        t.orderStatus ||
+        t.checkedIn !== undefined ||
+        t.canceled  !== undefined ||
+        t.archived  !== undefined
+      );
+      if (!looksLikeWixTicket) {
+        setErr('Not a Wix ticket — scan the QR code from the Wix confirmation email.');
+        setPhase('scan');
+        setScanKey((k) => k + 1);
+        setBusy(false);
+        return;
+      }
+
       setTicket({ ...t, ticketNumber: t.ticketNumber ?? tn });
       setPhase('review');
     } catch {
@@ -319,8 +343,8 @@ export function CheckInPage() {
       )}
 
       {err && (
-        <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-lg mb-4">
-          {err}
+        <div className="bg-red-900 border-2 border-red-500 text-red-100 font-bold text-center p-4 rounded-2xl mb-4 text-base">
+          ⚠ {err}
         </div>
       )}
 
