@@ -313,6 +313,15 @@ export async function loadAllCCOrders(): Promise<CCOrderDetail[]> {
   return orders.map((o) => ({ ...o, screeningTitles: titlesByOrder.get(o.id) ?? [] }));
 }
 
+// Save / clear the external_ref (invoice / ref number) on any order
+export async function saveOrderRef(orderId: string, ref: string | null): Promise<void> {
+  const { error } = await supabase
+    .from('orders')
+    .update({ external_ref: ref || null })
+    .eq('id', orderId);
+  if (error) throw error;
+}
+
 // ---------- CSV export ----------
 
 export function downloadCSV(filename: string, rows: (string | number)[][]) {

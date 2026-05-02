@@ -12,6 +12,7 @@ import {
   loadDrawerReport,
   loadFestivalReport,
   loadAllCCOrders,
+  saveOrderRef,
   type DrawerReport,
   type FestivalReport,
   type CCOrderDetail,
@@ -496,6 +497,25 @@ function CCReportView() {
   const [search, setSearch] = useState('');
   const [voidFor, setVoidFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
   const [deleteFor, setDeleteFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
+  // Inline ref editing
+  const [editingRef, setEditingRef] = useState<string | null>(null); // orderId being edited
+  const [refDraft, setRefDraft] = useState('');
+  const [refSaving, setRefSaving] = useState(false);
+
+  async function commitRef(orderId: string) {
+    setRefSaving(true);
+    try {
+      await saveOrderRef(orderId, refDraft.trim() || null);
+      setOrders((prev) =>
+        prev.map((o) => o.id === orderId ? { ...o, external_ref: refDraft.trim() || null } : o)
+      );
+      setEditingRef(null);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setRefSaving(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -600,9 +620,6 @@ function CCReportView() {
                         {money(o.subtotal_cents)}
                       </span>
                       {voided && <span className="text-xs bg-red-900/60 border border-red-700 text-red-300 px-1.5 py-0.5 rounded">voided</span>}
-                      {o.external_ref && (
-                        <span className="text-xs font-mono text-slate-400">#{o.external_ref}</span>
-                      )}
                     </div>
                     {/* Customer + cashier */}
                     <div className="text-sm text-slate-200">
@@ -616,6 +633,42 @@ function CCReportView() {
                       <div className="text-xs text-slate-400 mt-1">
                         {o.screeningTitles.join(' · ')}
                       </div>
+                    )}
+                    {/* Invoice / ref inline editor */}
+                    {editingRef === o.id ? (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <input
+                          autoFocus
+                          className="flex-1 bg-slate-700 border border-indigo-500 rounded px-2 py-1 text-xs font-mono"
+                          placeholder="Invoice / ref #"
+                          value={refDraft}
+                          onChange={(e) => setRefDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRef(o.id);
+                            if (e.key === 'Escape') setEditingRef(null);
+                          }}
+                        />
+                        <button
+                          disabled={refSaving}
+                          onClick={() => commitRef(o.id)}
+                          className="text-xs bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold"
+                        >{refSaving ? '…' : 'Save'}</button>
+                        <button
+                          onClick={() => setEditingRef(null)}
+                          className="text-xs text-slate-400 hover:text-white px-1 py-1"
+                        >✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingRef(o.id); setRefDraft(o.external_ref ?? ''); }}
+                        className="mt-1.5 flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-300 group"
+                      >
+                        {o.external_ref
+                          ? <span className="font-mono text-slate-300">#{o.external_ref}</span>
+                          : <span className="italic">+ add invoice / ref #</span>
+                        }
+                        <span className="opacity-0 group-hover:opacity-100 text-[10px]">✎</span>
+                      </button>
                     )}
                   </div>
                   {/* Actions */}
