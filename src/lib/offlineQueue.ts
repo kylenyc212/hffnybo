@@ -138,6 +138,15 @@ export async function submitOrderToSupabase(o: QueuedOrder): Promise<void> {
     .from('orders').select('id').eq('id', o.id).maybeSingle();
   if (existing) return;
 
+  // For Heartland orders: if an order with this invoice/ref already exists in the
+  // DB (entered online on another device, or a prior partial sync), treat this as
+  // already-done rather than failing on the unique-index constraint.
+  if (o.external_ref) {
+    const { data: byRef } = await supabase
+      .from('orders').select('id').eq('external_ref', o.external_ref).maybeSingle();
+    if (byRef) return;
+  }
+
   const source = o.source ?? 'boxoffice';
   const { error: orderErr } = await supabase.from('orders').insert({
     id: o.id,
@@ -234,7 +243,10 @@ export async function syncPending(): Promise<SyncResult> {
       succeeded++;
     } catch (e: unknown) {
       failed++;
-      const msg = e instanceof Error ? e.message : 'unknown error';
+      // Include Postgres error code if available (e.g. "23505" for unique violation)
+      const pgCode = (e as { code?: string }).code;
+      const base = e instanceof Error ? e.message : 'unknown error';
+      const msg = pgCode ? `[${pgCode}] ${base}` : base;
       errors.push(`${op.id.slice(0, 8)}: ${msg}`);
       const cur = readQueue();
       const idx = cur.findIndex((x) => x.id === op.id);
