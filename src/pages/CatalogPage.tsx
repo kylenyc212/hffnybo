@@ -233,7 +233,7 @@ export function CatalogPage() {
                             onClick={() => togglePast(s.id)}
                             className={`py-2 px-3 rounded-xl text-sm font-semibold border transition-colors text-left truncate ${
                               open
-                                ? 'bg-slate-700 border-slate-500 text-white'
+                                ? 'bg-amber-900/50 border-amber-600 text-amber-200'
                                 : 'bg-slate-800/60 border-slate-700 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
                             }`}
                           >
@@ -243,9 +243,11 @@ export function CatalogPage() {
                         );
                       })}
                     </div>
-                    {/* Expanded cards for any open past screenings */}
+                    {/* Expanded cards — left amber border ties each card back to its button */}
                     {past.filter((s) => expandedPastIds.has(s.id)).map((s) => (
-                      <ScreeningCard key={s.id} screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+                      <div key={s.id} className="border-l-4 border-amber-600 pl-2 rounded-r-xl">
+                        <ScreeningCard screening={s} onSold={bumpSold} onCheckedIn={bumpCheckin} />
+                      </div>
                     ))}
                   </div>
                 )}
