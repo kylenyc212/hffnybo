@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { hashPin } from './auth';
-import type { OrderRow, CashEventRow } from './database.types';
+import type { OrderRow, CashEventRow, OrderLineRow } from './database.types';
 
 // ====================================================================
 // PIN verification
@@ -193,4 +193,35 @@ export async function hardDeleteCashEvent(params: {
   if (delErr) return { ok: false, error: delErr.message };
 
   return { ok: true, adminName: sa.name };
+}
+
+// ====================================================================
+// Void a single ORDER LINE (partial refund)
+// Marks the line voided_at / voided_by; does NOT touch the order total
+// (Heartland refunds the card separately). Requires admin PIN + reason.
+// ====================================================================
+
+export async function voidOrderLine(params: {
+  lineId: string;
+  adminPin: string;
+  reason: string;
+}): Promise<{ ok: true; adminName: string } | { ok: false; error: string }> {
+  const admin = await verifyAdminPin(params.adminPin);
+  if (!admin) return { ok: false, error: 'Manager PIN not recognized.' };
+  if (!params.reason.trim()) return { ok: false, error: 'Reason required.' };
+
+  const { data, error: fErr } = await supabase
+    .from('order_lines').select('*').eq('id', params.lineId).maybeSingle();
+  if (fErr || !data) return { ok: false, error: fErr?.message ?? 'Line not found' };
+  const line = data as OrderLineRow;
+  if (line.voided_at) return { ok: false, error: 'Already voided.' };
+
+  const { error: updErr } = await supabase
+    .from('order_lines')
+    .update({ voided_at: new Date().toISOString(), voided_by: admin.name })
+    .eq('id', params.lineId)
+    .is('voided_at', null);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  return { ok: true, adminName: admin.name };
 }

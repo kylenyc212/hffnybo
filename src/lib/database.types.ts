@@ -112,6 +112,8 @@ export interface OrderLineRow {
   patron_name: string | null;
   checked_in_at: string | null;
   checked_in_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
 }
 
 export interface WixCheckinRow {

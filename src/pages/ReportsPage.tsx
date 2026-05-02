@@ -16,6 +16,7 @@ import {
   type DrawerReport,
   type FestivalReport,
   type CCOrderDetail,
+  type CCOrderLine,
 } from '../lib/reports';
 import type { CashDrawerRow } from '../lib/database.types';
 
@@ -497,6 +498,8 @@ function CCReportView() {
   const [search, setSearch] = useState('');
   const [voidFor, setVoidFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
   const [deleteFor, setDeleteFor] = useState<{ id: string; amountCents: number; description: string } | null>(null);
+  // Line-item void
+  const [voidLine, setVoidLine] = useState<{ id: string; amountCents: number; description: string } | null>(null);
   // Inline ref editing
   const [editingRef, setEditingRef] = useState<string | null>(null); // orderId being edited
   const [refDraft, setRefDraft] = useState('');
@@ -539,7 +542,7 @@ function CCReportView() {
       (o.external_ref ?? '').toLowerCase().includes(q) ||
       o.cashier_name.toLowerCase().includes(q) ||
       o.device_label.toLowerCase().includes(q) ||
-      o.screeningTitles.some((t) => t.toLowerCase().includes(q))
+      o.lines.some((l) => l.screening_title.toLowerCase().includes(q) || l.label.toLowerCase().includes(q))
     );
   }, [orders, search]);
 
@@ -566,17 +569,27 @@ function CCReportView() {
             <button
               onClick={() => {
                 const rows: (string | number)[][] = [
-                  ['Time (ET)', 'Cashier', 'Device', 'Customer', 'Ref #', 'Screenings', 'Amount', 'Voided'],
-                  ...orders.map((o) => [
-                    new Date(o.created_at).toLocaleString('en-US', { timeZone: 'America/New_York' }),
-                    o.cashier_name,
-                    o.device_label,
-                    o.customer_name ?? '',
-                    o.external_ref ?? '',
-                    o.screeningTitles.join('; '),
-                    (o.subtotal_cents / 100).toFixed(2),
-                    o.voided_at ? 'yes' : 'no',
-                  ])
+                  ['Time (ET)', 'Cashier', 'Device', 'Customer', 'Ref #', 'Screening', 'Ticket', 'Qty', 'Unit Price', 'Line Total', 'Line Voided', 'Order Voided'],
+                  ...orders.flatMap((o) => {
+                    const timeStr = new Date(o.created_at).toLocaleString('en-US', { timeZone: 'America/New_York' });
+                    if (o.lines.length === 0) {
+                      return [[timeStr, o.cashier_name, o.device_label, o.customer_name ?? '', o.external_ref ?? '', '', '', '', '', '', '', o.voided_at ? 'yes' : 'no']];
+                    }
+                    return o.lines.map((l) => [
+                      timeStr,
+                      o.cashier_name,
+                      o.device_label,
+                      o.customer_name ?? '',
+                      o.external_ref ?? '',
+                      l.screening_title,
+                      l.label,
+                      l.qty,
+                      (l.unit_price_cents / 100).toFixed(2),
+                      (l.qty * l.unit_price_cents / 100).toFixed(2),
+                      l.voided_at ? 'yes' : 'no',
+                      o.voided_at ? 'yes' : 'no',
+                    ]);
+                  })
                 ];
                 downloadCSV('hffny-cc-orders.csv', rows);
               }}
@@ -628,10 +641,42 @@ function CCReportView() {
                     <div className="text-xs text-slate-500 mt-0.5">
                       {timeLabel} · {o.cashier_name} · {o.device_label}
                     </div>
-                    {/* Screenings */}
-                    {o.screeningTitles.length > 0 && (
-                      <div className="text-xs text-slate-400 mt-1">
-                        {o.screeningTitles.join(' · ')}
+                    {/* Line items */}
+                    {o.lines.length > 0 && (
+                      <div className="mt-2 space-y-0.5">
+                        {o.lines.map((line: CCOrderLine) => {
+                          const lineVoided = !!line.voided_at;
+                          const lineTotal = line.qty * line.unit_price_cents;
+                          return (
+                            <div
+                              key={line.id}
+                              className={`flex items-center gap-2 text-xs rounded px-2 py-1 ${lineVoided ? 'bg-red-950/30' : 'bg-slate-900/50'}`}
+                            >
+                              <div className={`flex-1 min-w-0 ${lineVoided ? 'line-through text-slate-500' : 'text-slate-300'}`}>
+                                <span className="font-medium">{line.screening_title}</span>
+                                <span className="text-slate-500 mx-1">·</span>
+                                {line.label}
+                                <span className="text-slate-500 mx-1">×</span>
+                                {line.qty}
+                              </div>
+                              <span className={`tabular-nums shrink-0 ${lineVoided ? 'line-through text-slate-600' : 'text-slate-400'}`}>
+                                {money(lineTotal)}
+                              </span>
+                              {lineVoided ? (
+                                <span className="text-[10px] text-red-400 shrink-0">voided</span>
+                              ) : !voided && (
+                                <button
+                                  onClick={() => setVoidLine({
+                                    id: line.id,
+                                    amountCents: lineTotal,
+                                    description: `${line.screening_title} · ${line.label} × ${line.qty}`
+                                  })}
+                                  className="text-[10px] text-slate-500 hover:text-red-400 shrink-0 px-1"
+                                >Void</button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                     {/* Invoice / ref inline editor */}
@@ -711,6 +756,27 @@ function CCReportView() {
           description={deleteFor.description}
           onClose={() => setDeleteFor(null)}
           onDone={() => { setDeleteFor(null); load(); }}
+        />
+      )}
+      {voidLine && (
+        <VoidModal
+          mode="order_line"
+          targetId={voidLine.id}
+          amountCents={voidLine.amountCents}
+          description={voidLine.description}
+          onClose={() => setVoidLine(null)}
+          onDone={() => {
+            // Optimistically mark the line voided in local state
+            setOrders((prev) =>
+              prev.map((o) => ({
+                ...o,
+                lines: o.lines.map((l) =>
+                  l.id === voidLine.id ? { ...l, voided_at: new Date().toISOString() } : l
+                )
+              }))
+            );
+            setVoidLine(null);
+          }}
         />
       )}
     </div>

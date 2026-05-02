@@ -267,6 +267,16 @@ export async function loadFestivalReport(): Promise<FestivalReport> {
 
 // ---------- All CC / Heartland orders ----------
 
+export interface CCOrderLine {
+  id: string;
+  label: string;
+  qty: number;
+  unit_price_cents: number;
+  category: string;
+  screening_title: string;
+  voided_at: string | null;
+}
+
 export interface CCOrderDetail {
   id: string;
   created_at: string;
@@ -276,7 +286,7 @@ export interface CCOrderDetail {
   external_ref: string | null;
   subtotal_cents: number;
   voided_at: string | null;
-  screeningTitles: string[]; // distinct screening names on this order
+  lines: CCOrderLine[];
 }
 
 export async function loadAllCCOrders(): Promise<CCOrderDetail[]> {
@@ -286,15 +296,18 @@ export async function loadAllCCOrders(): Promise<CCOrderDetail[]> {
     .eq('source', 'external_heartland')
     .order('created_at', { ascending: false });
   if (oErr) throw oErr;
-  const orders = (orderData ?? []) as CCOrderDetail[];
-  if (orders.length === 0) return [];
+  const rawOrders = (orderData ?? []) as Omit<CCOrderDetail, 'lines'>[];
+  if (rawOrders.length === 0) return [];
 
-  const orderIds = orders.map((o) => o.id);
+  const orderIds = rawOrders.map((o) => o.id);
   const { data: lineData } = await supabase
     .from('order_lines')
-    .select('order_id, screening_id')
+    .select('id, order_id, label, qty, unit_price_cents, category, screening_id, voided_at')
     .in('order_id', orderIds);
-  const lines = (lineData ?? []) as { order_id: string; screening_id: string }[];
+  const lines = (lineData ?? []) as {
+    id: string; order_id: string; label: string; qty: number;
+    unit_price_cents: number; category: string; screening_id: string; voided_at: string | null;
+  }[];
 
   const scIds = Array.from(new Set(lines.map((l) => l.screening_id)));
   const { data: scData } = scIds.length
@@ -302,15 +315,22 @@ export async function loadAllCCOrders(): Promise<CCOrderDetail[]> {
     : { data: [] };
   const scMap = new Map((scData ?? []).map((s: { id: string; title: string }) => [s.id, s.title]));
 
-  const titlesByOrder = new Map<string, string[]>();
+  const linesByOrder = new Map<string, CCOrderLine[]>();
   for (const l of lines) {
-    const title = scMap.get(l.screening_id) ?? '—';
-    const arr = titlesByOrder.get(l.order_id) ?? [];
-    if (!arr.includes(title)) arr.push(title);
-    titlesByOrder.set(l.order_id, arr);
+    const arr = linesByOrder.get(l.order_id) ?? [];
+    arr.push({
+      id: l.id,
+      label: l.label,
+      qty: l.qty,
+      unit_price_cents: l.unit_price_cents,
+      category: l.category,
+      screening_title: scMap.get(l.screening_id) ?? '—',
+      voided_at: l.voided_at,
+    });
+    linesByOrder.set(l.order_id, arr);
   }
 
-  return orders.map((o) => ({ ...o, screeningTitles: titlesByOrder.get(o.id) ?? [] }));
+  return rawOrders.map((o) => ({ ...o, lines: linesByOrder.get(o.id) ?? [] }));
 }
 
 // Save / clear the external_ref (invoice / ref number) on any order

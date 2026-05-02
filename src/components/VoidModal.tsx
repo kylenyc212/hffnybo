@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { voidOrder, voidCashEvent } from '../lib/voids';
+import { voidOrder, voidCashEvent, voidOrderLine } from '../lib/voids';
 import { money } from '../lib/money';
 
-type Mode = 'order' | 'cash_event';
+type Mode = 'order' | 'cash_event' | 'order_line';
 
 interface Props {
   mode?: Mode; // defaults to 'order' for backward compatibility
-  targetId: string; // orderId or cashEventId
+  targetId: string; // orderId, cashEventId, or orderLineId
   amountCents: number;
   description?: string;
   onClose: () => void;
@@ -33,13 +33,23 @@ export function VoidModal({
     const result =
       mode === 'order'
         ? await voidOrder({ orderId: targetId, adminPin: pin, reason })
+        : mode === 'order_line'
+        ? await voidOrderLine({ lineId: targetId, adminPin: pin, reason })
         : await voidCashEvent({ eventId: targetId, adminPin: pin, reason });
     setBusy(false);
     if (!result.ok) { setErr(result.error); return; }
     onDone();
   }
 
-  const title = mode === 'order' ? 'Void transaction' : 'Void cash event';
+  const title =
+    mode === 'order'      ? 'Void transaction' :
+    mode === 'order_line' ? 'Void line item'   :
+                            'Void cash event';
+
+  const reasonPlaceholder =
+    mode === 'order'      ? 'Customer asked for refund, rung by mistake, etc.' :
+    mode === 'order_line' ? 'Partial refund — wrong ticket type, etc.' :
+                            'Cash add was duplicate, removal was reversed, etc.';
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
@@ -74,11 +84,7 @@ export function VoidModal({
             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder={
-              mode === 'order'
-                ? 'Customer asked for refund, rung by mistake, etc.'
-                : 'Cash add was duplicate, removal was reversed, etc.'
-            }
+            placeholder={reasonPlaceholder}
           />
         </label>
         {err && <div className="text-red-400 text-sm">{err}</div>}
