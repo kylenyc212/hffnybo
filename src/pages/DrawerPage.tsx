@@ -265,6 +265,32 @@ function OpenDrawerView({
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<Record<string, 'sent' | 'error'>>({});
 
+  // Inline customer name/email editing
+  const [editingCustomer, setEditingCustomer] = useState<string | null>(null); // orderId
+  const [customerNameDraft, setCustomerNameDraft] = useState('');
+  const [customerEmailDraft, setCustomerEmailDraft] = useState('');
+  const [customerSaving, setCustomerSaving] = useState(false);
+
+  async function saveCustomer(orderId: string) {
+    setCustomerSaving(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          customer_name: customerNameDraft.trim() || null,
+          customer_email: customerEmailDraft.trim() || null,
+        })
+        .eq('id', orderId);
+      if (error) throw error;
+      setEditingCustomer(null);
+      onRefresh();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setCustomerSaving(false);
+    }
+  }
+
   async function sendReceipt(event: EnrichedEvent, toEmail: string) {
     if (!toEmail.includes('@') || emailSending) return;
     setEmailSending(true);
@@ -615,10 +641,25 @@ function OpenDrawerView({
                           <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
                         )}
                       </div>
-                      {e.kind === 'sale' && (e.order_customer_name || e.order_customer_email) && (
-                        <div className="text-xs text-indigo-300 mt-0.5">
-                          {[e.order_customer_name, e.order_customer_email].filter(Boolean).join(' · ')}
-                        </div>
+                      {e.kind === 'sale' && !isVoided && (
+                        <button
+                          onClick={() => {
+                            setEditingCustomer(e.order_id!);
+                            setCustomerNameDraft(e.order_customer_name ?? '');
+                            setCustomerEmailDraft(e.order_customer_email ?? '');
+                            setEmailFor(null);
+                          }}
+                          className="mt-0.5 flex items-center gap-1 text-xs group text-left"
+                        >
+                          {e.order_customer_name || e.order_customer_email ? (
+                            <span className="text-indigo-300 group-hover:text-indigo-200">
+                              {[e.order_customer_name, e.order_customer_email].filter(Boolean).join(' · ')}
+                            </span>
+                          ) : (
+                            <span className="text-slate-600 italic group-hover:text-slate-400">+ add name</span>
+                          )}
+                          <span className="opacity-0 group-hover:opacity-100 text-slate-500 text-[10px]">✎</span>
+                        </button>
                       )}
                     </div>
                     <div
@@ -714,6 +755,47 @@ function OpenDrawerView({
                       )}
                     </div>
                   </div>
+
+                  {/* Inline customer name/email editor */}
+                  {e.kind === 'sale' && editingCustomer === e.order_id && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex gap-2 items-center">
+                        <input
+                          autoFocus
+                          className="flex-1 bg-slate-900 border border-indigo-600 rounded-lg px-3 py-1.5 text-sm"
+                          placeholder="Customer name"
+                          value={customerNameDraft}
+                          onChange={(ev) => setCustomerNameDraft(ev.target.value)}
+                          onKeyDown={(ev) => { if (ev.key === 'Escape') setEditingCustomer(null); }}
+                          autoCapitalize="words"
+                        />
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="email"
+                          inputMode="email"
+                          autoCapitalize="off"
+                          className="flex-1 bg-slate-900 border border-indigo-600 rounded-lg px-3 py-1.5 text-sm"
+                          placeholder="email@example.com (optional)"
+                          value={customerEmailDraft}
+                          onChange={(ev) => setCustomerEmailDraft(ev.target.value)}
+                          onKeyDown={(ev) => {
+                            if (ev.key === 'Enter') saveCustomer(e.order_id!);
+                            if (ev.key === 'Escape') setEditingCustomer(null);
+                          }}
+                        />
+                        <button
+                          disabled={customerSaving}
+                          onClick={() => saveCustomer(e.order_id!)}
+                          className="bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                        >{customerSaving ? '…' : 'Save'}</button>
+                        <button
+                          onClick={() => setEditingCustomer(null)}
+                          className="text-slate-500 hover:text-white text-sm px-2"
+                        >✕</button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Inline email input */}
                   {canExpand && emailFor === e.order_id && (
