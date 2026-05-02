@@ -421,13 +421,15 @@ export function GuestListTab() {
                                           setBoLineBusy((p) => ({ ...p, [line.lineId]: false }));
                                         }
                                       }}
-                                      className={`min-w-[2.5rem] h-9 px-2 rounded-lg text-xs font-bold border transition-colors ${
+                                      className={`h-10 rounded-lg text-sm font-bold border transition-colors disabled:opacity-50 ${
+                                        line.qty === 1 ? 'w-full' : 'min-w-[2.75rem] px-2'
+                                      } ${
                                         isIn
                                           ? 'bg-emerald-700 border-emerald-600 text-white'
-                                          : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-emerald-600 hover:text-emerald-300'
-                                      } disabled:opacity-50`}
+                                          : 'bg-slate-800 border-slate-600 text-slate-500 hover:border-emerald-600 hover:text-emerald-300'
+                                      }`}
                                     >
-                                      {isIn ? '✓' : line.qty > 1 ? `${i + 1}` : '✓?'}
+                                      {isIn ? '✓ In' : line.qty > 1 ? `${i + 1}` : 'Check In'}
                                     </button>
                                   );
                                 })}
