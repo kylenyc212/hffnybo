@@ -5,9 +5,22 @@ import { lookupPassholder, createPassholder } from '../lib/queries';
 interface Props {
   onClose: () => void;
   onFound: (ph: { id: string; name: string; email: string | null; barcode: string }) => void;
+  /** Called when a Wix ticket QR is scanned instead of a pass barcode. */
+  onWixTicket?: (ticketNumber: string, eventId: string) => void;
 }
 
-export function PassScanner({ onClose, onFound }: Props) {
+function parseWixUrl(code: string): { ticketNumber: string; eventId: string } | null {
+  try {
+    const u = new URL(code.trim());
+    if (u.hostname.includes('wixevents.com')) {
+      const m = u.pathname.match(/\/check-in\/([^,/?]+)(?:,([^/?]+))?/);
+      if (m) return { ticketNumber: m[1], eventId: m[2] ?? '' };
+    }
+  } catch { /* not a URL */ }
+  return null;
+}
+
+export function PassScanner({ onClose, onFound, onWixTicket }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
@@ -63,6 +76,17 @@ export function PassScanner({ onClose, onFound }: Props) {
   }, []);
 
   async function handleBarcode(code: string) {
+    // Reject Wix ticket QR codes — they belong in the Check-In tab
+    const wix = parseWixUrl(code);
+    if (wix) {
+      if (onWixTicket) {
+        onWixTicket(wix.ticketNumber, wix.eventId);
+      } else {
+        setStatus('That\'s a Wix ticket — use the Check In tab instead.');
+      }
+      return;
+    }
+
     setStatus(`Looking up ${code}…`);
     setUnknownBarcode(null);
     try {

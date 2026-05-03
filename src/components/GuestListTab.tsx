@@ -27,6 +27,8 @@ interface GuestRecord {
 }
 
 // Module-level cache — survives navigation away and back within the same session.
+// Guest list auto-refreshes after CACHE_TTL_MS to pick up new check-ins.
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const _cache: {
   events: WixEventSummary[];
   selectedEventId: string;
@@ -82,7 +84,9 @@ export function GuestListTab({ jumpToEventId, onJumpConsumed }: GuestListTabProp
 
   useEffect(() => {
     if (!selectedEventId) { setGuests([]); setBoOrders([]); return; }
-    if (_cache.selectedEventId === selectedEventId && _cache.guests.length > 0) return;
+    const cacheAge = _cache.fetchedAt ? Date.now() - new Date(_cache.fetchedAt).getTime() : Infinity;
+    const cacheValid = _cache.selectedEventId === selectedEventId && _cache.guests.length > 0 && cacheAge < CACHE_TTL_MS;
+    if (cacheValid) return;
     loadGuests(selectedEventId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId]);

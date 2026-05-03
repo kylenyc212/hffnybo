@@ -768,6 +768,11 @@ export function CartPage() {
             applyCustomerNameToCompLines(ph.name, { passholderId: ph.id, email: ph.email });
             setScanOpen(false);
           }}
+          onWixTicket={(ticketNumber, eventId) => {
+            setScanOpen(false);
+            // Hand off to the Check-In page with the decoded ticket pre-filled
+            nav(`/checkin?ticket=${encodeURIComponent(ticketNumber)}&eventId=${encodeURIComponent(eventId)}`);
+          }}
         />
       )}
       {/* Auto-shown when receipt text is pasted — modal handles full checkout */}

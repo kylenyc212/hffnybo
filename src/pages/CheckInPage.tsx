@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { useSession } from '../lib/session';
 import {
@@ -58,6 +59,7 @@ function detectCheckedIn(t: WixTicket): boolean {
 
 export function CheckInPage() {
   const { user } = useSession();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Main tab ──
   const [mainTab, setMainTab] = useState<MainTab>('scan');
@@ -102,6 +104,20 @@ export function CheckInPage() {
   useEffect(() => {
     const id = setInterval(refreshCounts, 15_000);
     return () => clearInterval(id);
+  }, []);
+
+  // Auto-process a ticket handed off from the pass scanner (via ?ticket=&eventId= params)
+  useEffect(() => {
+    const ticket  = searchParams.get('ticket');
+    const eventId = searchParams.get('eventId');
+    if (!ticket) return;
+    // Clear params from URL so a refresh doesn't re-trigger
+    setSearchParams({}, { replace: true });
+    const raw = eventId
+      ? `https://www.wixevents.com/check-in/${ticket},${eventId}`
+      : ticket;
+    handleCode(raw);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

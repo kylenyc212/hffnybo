@@ -110,7 +110,7 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
       const firstName = (gd.firstName ?? '').trim();
       const lastName  = (gd.lastName  ?? '').trim();
       const email     = (gd.email ?? '').trim();
-      const checkedIn = gd.checkedIn === true || g.attendanceStatus === 'ARRIVED';
+      const checkedIn = gd.checkedIn === true || g.attendanceStatus === 'ATTENDED' || g.attendanceStatus === 'ARRIVED';
       const orderNum  = g.orderNumber ?? g.id ?? '';
 
       const tickets = (g.tickets ?? [])
