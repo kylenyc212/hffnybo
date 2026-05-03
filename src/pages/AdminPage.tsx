@@ -6,7 +6,7 @@ import { UsersPanel } from '../components/admin/UsersPanel';
 import { HeartlandPanel } from '../components/admin/HeartlandPanel';
 import { WixPanel } from '../components/admin/WixPanel';
 
-type Section = 'schedule' | 'wix' | 'passholders' | 'users' | 'heartland';
+type Section = 'schedule' | 'wix' | 'passholders' | 'users' | 'heartland' | 'screencap';
 
 export function AdminPage() {
   const { user } = useSession();
@@ -30,14 +30,14 @@ export function AdminPage() {
         <Tab active={section === 'passholders'} onClick={() => setSection('passholders')}>Passholders</Tab>
         <Tab active={section === 'users'} onClick={() => setSection('users')}>Users &amp; PINs</Tab>
         <Tab active={section === 'heartland'} onClick={() => setSection('heartland')}>Heartland</Tab>
+        <Tab active={section === 'screencap'} onClick={() => setSection('screencap')}>🖥 Screen Cap</Tab>
       </div>
       {section === 'schedule' && <SchedulePanel />}
       {section === 'wix' && <WixPanel />}
       {section === 'passholders' && <PassholdersPanel />}
       {section === 'users' && <UsersPanel />}
       {section === 'heartland' && <HeartlandPanel />}
-
-      <ScreenCapTest />
+      {section === 'screencap' && <ScreenCapTest />}
     </div>
   );
 }
@@ -85,7 +85,7 @@ function ScreenCapTest() {
   }
 
   return (
-    <div className="mt-10 border-t border-slate-700 pt-6">
+    <div>
       <h2 className="text-lg font-bold mb-1">🖥 Screen Capture API test</h2>
       <p className="text-sm text-slate-400 mb-3">
         Pressing the button calls <code className="bg-slate-800 px-1 rounded">getDisplayMedia()</code>.
