@@ -70,9 +70,10 @@ export interface GuestRecord {
   tickets: { number: string; typeName: string; checkedIn: boolean }[];
 }
 
-async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
+async function fetchAllGuests(eventId: string, debug = false): Promise<{ guests: GuestRecord[]; rawSample?: unknown[] }> {
   const all: GuestRecord[] = [];
   const byOrder = new Map<string, GuestRecord>(); // orderNumber → merged record
+  const rawSample: unknown[] = []; // debug: first 10 raw Wix guest records
   const limit = 100;
 
   for (let page = 0; page < 50; page++) {
@@ -104,6 +105,15 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
 
     const guests = data.guests ?? [];
     for (const g of guests) {
+      // Collect raw sample for debug mode (first 10 records)
+      if (debug && rawSample.length < 10) {
+        rawSample.push({
+          orderNumber:      g.orderNumber,
+          attendanceStatus: g.attendanceStatus,
+          guestDetails:     g.guestDetails,
+          tickets:          (g.tickets ?? []).map((t) => ({ number: t.number, checkedIn: t.guestDetails?.checkedIn })),
+        });
+      }
       if (g.additionalDetails?.archived) continue;
 
       const gd        = g.guestDetails ?? {};
@@ -168,7 +178,7 @@ async function fetchAllGuests(eventId: string): Promise<GuestRecord[]> {
     return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName);
   });
 
-  return all;
+  return { guests: all, rawSample: debug ? rawSample : undefined };
 }
 
 export default async function handler(req: VReq, res: VRes) {
@@ -180,12 +190,13 @@ export default async function handler(req: VReq, res: VRes) {
     const eventId = Array.isArray(req.query?.eventId)
       ? req.query!.eventId[0]
       : req.query?.eventId;
+    const debug = req.query?.debug === '1' || req.query?.debug === 'true';
     if (!eventId) {
       res.status(400).json({ error: 'eventId required' });
       return;
     }
-    const guests = await fetchAllGuests(eventId);
-    res.status(200).json({ guests, total: guests.length });
+    const { guests, rawSample } = await fetchAllGuests(eventId, debug);
+    res.status(200).json({ guests, total: guests.length, ...(debug ? { _rawSample: rawSample } : {}) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Failed';
     console.error('[/api/wix-guests]', msg);
