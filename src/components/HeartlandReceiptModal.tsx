@@ -42,6 +42,7 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
   const [checkedInQty, setCheckedInQty]   = useState<Record<string, number>>({});
   const [checkingIn, setCheckingIn]       = useState<Set<string>>(new Set());
   const [checkinLoadErr, setCheckinLoadErr] = useState<string | null>(null);
+  const [isDuplicateInvoice, setIsDuplicateInvoice] = useState(false);
   const [emailSending, setEmailSending]   = useState(false);
   const [emailSent, setEmailSent]         = useState(false);
   const [emailErr, setEmailErr]           = useState<string | null>(null);
@@ -123,11 +124,14 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
       if (result.synced) {
         try {
           let cls = await getCheckinLinesForOrder(result.orderId);
-          // Fallback: duplicate invoice detection may have returned early without
-          // inserting lines under result.orderId — try looking up by invoice number.
+          // Duplicate invoice: submitOrderToSupabase returned early without inserting
+          // lines under result.orderId — fall back to the previously-recorded order.
           if (cls.length === 0) {
             const ref = receipt.invoiceNumber || receipt.receiptNumber;
-            if (ref) cls = await getCheckinLinesForExternalRef(ref);
+            if (ref) {
+              cls = await getCheckinLinesForExternalRef(ref);
+              if (cls.length > 0) setIsDuplicateInvoice(true);
+            }
           }
           setCheckinLines(cls);
           const init: Record<string, number> = {};
@@ -223,66 +227,76 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           {/* Per-ticket check-in */}
           {success.synced && checkinLines.length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-              <div className="text-sm font-semibold mb-0.5 text-slate-200">Check in at door</div>
-              <div className="text-xs text-slate-400 mb-3">Tap each circle as guests arrive · tap again to undo</div>
-              <div className="space-y-3">
+              <div className="text-sm font-semibold mb-1 text-slate-200">Check in at door</div>
+              {isDuplicateInvoice && (
+                <div className="text-xs text-amber-400 mb-3">
+                  ⚠ Invoice previously recorded — showing tickets from original sale
+                </div>
+              )}
+              <div className="space-y-1">
                 {checkinLines.map((line) => {
                   const total = line.qty;
                   const inQty = checkedInQty[line.id] ?? 0;
                   const busy = checkingIn.has(line.id);
-                  return (
-                    <div key={line.id}>
-                      {line.screenings && (
-                        <div className="text-xs text-slate-400 mb-1 leading-tight">
-                          {line.screenings.title}
-                          {!line.screenings.is_always_available && ` · ${fmtWhen(line.screenings.starts_at)}`}
+                  const screeningLabel = line.screenings
+                    ? `${line.screenings.title}${!line.screenings.is_always_available ? ` · ${fmtWhen(line.screenings.starts_at)}` : ''}`
+                    : null;
+
+                  // One row per ticket slot (handles qty > 1 by repeating)
+                  return Array.from({ length: total }, (_, idx) => {
+                    const isIn = idx < inQty;
+                    const isNext = idx === inQty;
+                    const isLastIn = idx === inQty - 1;
+                    return (
+                      <div key={`${line.id}-${idx}`} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 ${isIn ? 'bg-emerald-900/40' : 'bg-slate-900/60'}`}>
+                        <div className="min-w-0 flex-1">
+                          {screeningLabel && <div className="text-xs text-slate-400 leading-tight">{screeningLabel}</div>}
+                          <div className="text-sm font-semibold text-slate-200 leading-tight">
+                            {line.label}{total > 1 ? ` #${idx + 1}` : ''}
+                          </div>
                         </div>
-                      )}
-                      <div className="flex items-center gap-3">
-                        <div className="text-sm font-semibold text-slate-200 flex-1 leading-tight">{line.label}</div>
-                        <div className="flex gap-1.5 flex-wrap justify-end">
-                          {Array.from({ length: total }, (_, idx) => {
-                            const isIn = idx < inQty;
-                            const isLastIn = idx === inQty - 1;  // only the last checked-in can be undone
-                            const isNext = idx === inQty;         // next slot to check in
-                            const tappable = isNext || (isIn && isLastIn);
-                            return (
+                        {isIn ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-emerald-400 text-sm">✓</span>
+                            {isLastIn && (
                               <button
-                                key={idx}
-                                disabled={busy || !tappable}
+                                disabled={busy}
                                 onClick={async () => {
-                                  if (busy || !tappable) return;
                                   setCheckingIn((p) => new Set(p).add(line.id));
                                   try {
-                                    if (isIn && isLastIn) {
-                                      await uncheckInOne(line.id, inQty);
-                                      setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
-                                    } else if (isNext) {
-                                      await checkInOne(line.id, user!.name, inQty, total);
-                                      setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
-                                    }
+                                    await uncheckInOne(line.id, inQty);
+                                    setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
                                   } catch { /* ignore */ } finally {
                                     setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
                                   }
                                 }}
-                                className={`w-10 h-10 rounded-full text-sm font-bold border-2 transition-colors ${
-                                  isIn
-                                    ? isLastIn
-                                      ? 'bg-emerald-600 border-emerald-400 text-white hover:bg-emerald-700 active:bg-red-800 active:border-red-600'
-                                      : 'bg-emerald-600 border-emerald-500 text-white cursor-default'
-                                    : isNext
-                                      ? 'bg-slate-700 border-slate-500 text-slate-200 hover:bg-emerald-900 hover:border-emerald-600'
-                                      : 'bg-slate-800/40 border-slate-700/40 text-slate-600 opacity-40'
-                                }`}
-                              >
-                                {busy && (isIn ? isLastIn : isNext) ? '…' : isIn ? '✓' : idx + 1}
-                              </button>
-                            );
-                          })}
-                        </div>
+                                className="text-xs text-slate-500 hover:text-slate-300 disabled:opacity-40"
+                              >undo</button>
+                            )}
+                          </div>
+                        ) : isNext ? (
+                          <button
+                            disabled={busy}
+                            onClick={async () => {
+                              if (!user) return;
+                              setCheckingIn((p) => new Set(p).add(line.id));
+                              try {
+                                await checkInOne(line.id, user.name, inQty, total);
+                                setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
+                              } catch { /* ignore */ } finally {
+                                setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                              }
+                            }}
+                            className="shrink-0 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold px-3 py-1 rounded-lg"
+                          >
+                            {busy ? '…' : 'Check In'}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-600 shrink-0">—</span>
+                        )}
                       </div>
-                    </div>
-                  );
+                    );
+                  });
                 })}
               </div>
             </div>
