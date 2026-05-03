@@ -207,67 +207,63 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           {/* Per-ticket check-in */}
           {success.synced && checkinLines.length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-              <div className="text-sm font-semibold mb-3 text-slate-200">Check in at door</div>
-              <div className="space-y-2">
+              <div className="text-sm font-semibold mb-0.5 text-slate-200">Check in at door</div>
+              <div className="text-xs text-slate-400 mb-3">Tap each circle as guests arrive · tap again to undo</div>
+              <div className="space-y-3">
                 {checkinLines.map((line) => {
                   const total = line.qty;
                   const inQty = checkedInQty[line.id] ?? 0;
-                  const full = inQty >= total;
                   const busy = checkingIn.has(line.id);
                   return (
-                    <div key={line.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 border ${full ? 'bg-emerald-950/40 border-emerald-800' : inQty > 0 ? 'bg-amber-950/30 border-amber-700' : 'bg-slate-900 border-slate-700'}`}>
-                      <div className="flex-1 min-w-0">
-                        {line.screenings && (
-                          <div className="text-xs text-slate-400 mb-0.5">
-                            {line.screenings.title}
-                            {!line.screenings.is_always_available && ` · ${fmtWhen(line.screenings.starts_at)}`}
-                          </div>
-                        )}
-                        <div className="font-semibold text-sm leading-tight">{line.label}</div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {full ? (
-                          <span className="text-emerald-400 text-sm font-semibold">
-                            ✓ {total > 1 ? `All ${total} in` : 'In'}
-                          </span>
-                        ) : inQty > 0 ? (
-                          <span className="text-amber-300 text-sm font-semibold tabular-nums">
-                            {inQty}/{total} in
-                          </span>
-                        ) : null}
-                        {inQty > 0 && (
-                          <button
-                            disabled={busy}
-                            onClick={async () => {
-                              setCheckingIn((p) => new Set(p).add(line.id));
-                              try {
-                                await uncheckInOne(line.id, inQty);
-                                setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
-                              } catch { /* ignore */ } finally {
-                                setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
-                              }
-                            }}
-                            className="w-9 h-9 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold rounded-lg"
-                          >−</button>
-                        )}
-                        {!full && (
-                          <button
-                            disabled={busy}
-                            onClick={async () => {
-                              if (!user) return;
-                              setCheckingIn((p) => new Set(p).add(line.id));
-                              try {
-                                await checkInOne(line.id, user.name, inQty, total);
-                                setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
-                              } catch { /* ignore */ } finally {
-                                setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
-                              }
-                            }}
-                            className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg whitespace-nowrap"
-                          >
-                            {busy ? '…' : `Check In${total > 1 ? ' +1' : ' ✓'}`}
-                          </button>
-                        )}
+                    <div key={line.id}>
+                      {line.screenings && (
+                        <div className="text-xs text-slate-400 mb-1 leading-tight">
+                          {line.screenings.title}
+                          {!line.screenings.is_always_available && ` · ${fmtWhen(line.screenings.starts_at)}`}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <div className="text-sm font-semibold text-slate-200 flex-1 leading-tight">{line.label}</div>
+                        <div className="flex gap-1.5 flex-wrap justify-end">
+                          {Array.from({ length: total }, (_, idx) => {
+                            const isIn = idx < inQty;
+                            const isLastIn = idx === inQty - 1;  // only the last checked-in can be undone
+                            const isNext = idx === inQty;         // next slot to check in
+                            const tappable = isNext || (isIn && isLastIn);
+                            return (
+                              <button
+                                key={idx}
+                                disabled={busy || !tappable}
+                                onClick={async () => {
+                                  if (busy || !tappable) return;
+                                  setCheckingIn((p) => new Set(p).add(line.id));
+                                  try {
+                                    if (isIn && isLastIn) {
+                                      await uncheckInOne(line.id, inQty);
+                                      setCheckedInQty((p) => ({ ...p, [line.id]: inQty - 1 }));
+                                    } else if (isNext) {
+                                      await checkInOne(line.id, user!.name, inQty, total);
+                                      setCheckedInQty((p) => ({ ...p, [line.id]: inQty + 1 }));
+                                    }
+                                  } catch { /* ignore */ } finally {
+                                    setCheckingIn((p) => { const s = new Set(p); s.delete(line.id); return s; });
+                                  }
+                                }}
+                                className={`w-10 h-10 rounded-full text-sm font-bold border-2 transition-colors ${
+                                  isIn
+                                    ? isLastIn
+                                      ? 'bg-emerald-600 border-emerald-400 text-white hover:bg-emerald-700 active:bg-red-800 active:border-red-600'
+                                      : 'bg-emerald-600 border-emerald-500 text-white cursor-default'
+                                    : isNext
+                                      ? 'bg-slate-700 border-slate-500 text-slate-200 hover:bg-emerald-900 hover:border-emerald-600'
+                                      : 'bg-slate-800/40 border-slate-700/40 text-slate-600 opacity-40'
+                                }`}
+                              >
+                                {busy && (isIn ? isLastIn : isNext) ? '…' : isIn ? '✓' : idx + 1}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   );
@@ -506,7 +502,7 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
               onClick={confirm}
               className="flex-[2] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-bold py-3 rounded-xl"
             >
-              {submitting ? 'Recording…' : `Confirm & Check In ✓${stillUnmatched > 0 ? ` (skip ${stillUnmatched})` : ''}`}
+              {submitting ? 'Recording…' : `Record Sale${stillUnmatched > 0 ? ` (skip ${stillUnmatched})` : ''}`}
             </button>
           </div>
         )}
