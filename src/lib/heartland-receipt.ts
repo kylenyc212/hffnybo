@@ -188,11 +188,14 @@ export function bustMatchCatalogCache() { _cache = null; }
 
 async function loadCatalog() {
   if (_cache) return _cache;
-  const [{ data: tt }, { data: sc }] = await Promise.all([
+  const [ttRes, scRes] = await Promise.all([
     supabase.from('ticket_types').select('id, screening_id, label, price_cents, category, heartland_sku').eq('active', true),
     supabase.from('screenings').select('id, title, starts_at'),
   ]);
-  _cache = { ticketTypes: (tt ?? []) as TTypeRow[], screenings: (sc ?? []) as SRow[] };
+  if (ttRes.error) throw new Error(`ticket_types: ${ttRes.error.message}`);
+  if (scRes.error) throw new Error(`screenings: ${scRes.error.message}`);
+  console.log('[HL catalog] loaded', scRes.data?.length, 'screenings,', ttRes.data?.length, 'ticket types');
+  _cache = { ticketTypes: (ttRes.data ?? []) as TTypeRow[], screenings: (scRes.data ?? []) as SRow[] };
   // Bust cache after 5 min
   setTimeout(() => { _cache = null; }, 5 * 60 * 1000);
   return _cache;
@@ -259,8 +262,10 @@ export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<Mat
       if (!code || !strip(sc.title).includes(strip(code))) return false;
       if (!mon || !day) return true;
       const d = new Date(sc.starts_at);
-      // month is 1-indexed in the receipt, 0-indexed in JS
-      return d.getMonth() + 1 === mon && d.getDate() === day;
+      // Use NY local time for date comparison — starts_at is stored with -04:00 offset
+      // so toLocaleDateString gives the correct calendar date regardless of client TZ.
+      const nyDate = new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      return nyDate.getMonth() + 1 === mon && nyDate.getDate() === day;
     });
     console.log(`[HL match] "${item.rawName}" → code="${code}" date=${mon}/${day} suffix="${suffix}" → ${matchingScreenings.length} screening(s) matched`);
 
