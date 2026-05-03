@@ -89,6 +89,7 @@ export function PassholdersPanel() {
 
   const acs   = passes.filter((p) => p.barcode.startsWith('ACS'));
   const cin25 = passes.filter((p) => p.barcode.startsWith('CIN25'));
+  const other = passes.filter((p) => !p.barcode.startsWith('ACS') && !p.barcode.startsWith('CIN25'));
 
   const q = search.trim().toLowerCase();
   const filterRows = (rows: PassholderRow[]) =>
@@ -164,7 +165,26 @@ export function PassholdersPanel() {
         </div>
       )}
 
-      {q && filterRows(acs).length === 0 && filterRows(cin25).length === 0 && (
+      {/* Other / walk-in registered passes */}
+      {filterRows(other).length > 0 && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+          <div className="px-4 py-2 bg-slate-700/50 text-xs font-semibold text-slate-300 flex justify-between">
+            <span>Other passes ({other.length})</span>
+            <span className="text-slate-500">{other.filter((p) => (p.name ?? '').trim()).length} assigned</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full px-4">
+              <tbody className="divide-y divide-slate-700/0">
+                {filterRows(other).map((p) => (
+                  <PassRow key={p.id} pass={p} onSaved={handleSaved} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {q && filterRows(acs).length === 0 && filterRows(cin25).length === 0 && filterRows(other).length === 0 && (
         <div className="text-sm text-slate-500 text-center py-6">No passes match "{search}"</div>
       )}
     </div>
