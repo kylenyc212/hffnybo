@@ -51,7 +51,11 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
     );
     cardBrand = brandMatch?.[1]?.trim() ?? '';
   }
-  const cardLast4 = text.match(/Card\s+ending\s+in\s+(\d+)/i)?.[1] ?? '';
+  // "Card ending in 1234" (old format) OR "Card Number  ****1234" (new format)
+  const cardLast4 =
+    text.match(/Card\s+ending\s+in\s+(\d+)/i)?.[1] ??
+    text.match(/Card\s+Number\s+[*\s]*(\d{4})\b/i)?.[1] ??
+    '';
 
   // ── Items ─────────────────────────────────────────────────────────────────
   const items: HeartlandLineItem[] = [];
@@ -65,6 +69,18 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
       qty: parseInt(m[2], 10),
       unitPriceCents: Math.round(parseFloat(m[3]) * 100),
     });
+  }
+
+  // Strategy 3: "1 x ITEM NAME @ $12.00" inline format (new Heartland layout)
+  if (items.length === 0) {
+    const inlineRe = /^(\d+)\s+x\s+(.+?)\s+@\s+\$(\d+\.\d{2})/gm;
+    while ((m = inlineRe.exec(text)) !== null) {
+      items.push({
+        rawName: m[2].trim(),
+        qty: parseInt(m[1], 10),
+        unitPriceCents: Math.round(parseFloat(m[3]) * 100),
+      });
+    }
   }
 
   // Strategy 2: two-column layout — names and prices on separate lines
@@ -141,8 +157,8 @@ export function parseHeartlandReceipt(text: string): ParsedHeartlandReceipt {
   }
 
   // ── Total ─────────────────────────────────────────────────────────────────
-  // Use the last "Total $XX.XX" line; fall back to summing item prices
-  const totalMatches = [...text.matchAll(/^Total\s+\$(\d+\.\d{2})/gim)];
+  // Handles "Total  $36.00" and "Total  USD $36.00"
+  const totalMatches = [...text.matchAll(/^Total\s+(?:USD\s+)?\$(\d+\.\d{2})/gim)];
   const totalCents = totalMatches.length
     ? Math.round(parseFloat(totalMatches[totalMatches.length - 1][1]) * 100)
     : items.reduce((s, i) => s + i.qty * i.unitPriceCents, 0);
