@@ -143,6 +143,20 @@ export async function getCheckinLinesForOrder(orderId: string): Promise<OrderLin
   return (data ?? []) as OrderLineWithScreening[];
 }
 
+/** Load order_lines by external_ref (invoice/receipt number) — fallback for when a
+ *  duplicate invoice was detected and the lines are under an earlier order's UUID. */
+export async function getCheckinLinesForExternalRef(externalRef: string): Promise<OrderLineWithScreening[]> {
+  const { data: order } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('external_ref', externalRef)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!order) return [];
+  return getCheckinLinesForOrder((order as { id: string }).id);
+}
+
 /** Look up the BO screening that maps to a given Wix event ID. */
 export async function lookupScreeningByWixId(wixEventId: string): Promise<{ id: string; title: string; starts_at: string } | null> {
   const { data } = await supabase

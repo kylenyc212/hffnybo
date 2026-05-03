@@ -13,7 +13,7 @@ import type {
   SRow,
 } from '../lib/heartland-receipt';
 import { checkout } from '../lib/checkout';
-import { getCheckinLinesForOrder, checkInOne, uncheckInOne } from '../lib/checkins';
+import { getCheckinLinesForOrder, getCheckinLinesForExternalRef, checkInOne, uncheckInOne } from '../lib/checkins';
 import type { OrderLineWithScreening } from '../lib/checkins';
 import { sendReceiptEmail } from '../lib/email';
 import { useSession } from '../lib/session';
@@ -41,6 +41,7 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
   const [checkinLines, setCheckinLines]   = useState<OrderLineWithScreening[]>([]);
   const [checkedInQty, setCheckedInQty]   = useState<Record<string, number>>({});
   const [checkingIn, setCheckingIn]       = useState<Set<string>>(new Set());
+  const [checkinLoadErr, setCheckinLoadErr] = useState<string | null>(null);
   const [emailSending, setEmailSending]   = useState(false);
   const [emailSent, setEmailSent]         = useState(false);
   const [emailErr, setEmailErr]           = useState<string | null>(null);
@@ -121,12 +122,20 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
       // Load lines so cashier can check in ticket by ticket
       if (result.synced) {
         try {
-          const cls = await getCheckinLinesForOrder(result.orderId);
+          let cls = await getCheckinLinesForOrder(result.orderId);
+          // Fallback: duplicate invoice detection may have returned early without
+          // inserting lines under result.orderId — try looking up by invoice number.
+          if (cls.length === 0) {
+            const ref = receipt.invoiceNumber || receipt.receiptNumber;
+            if (ref) cls = await getCheckinLinesForExternalRef(ref);
+          }
           setCheckinLines(cls);
           const init: Record<string, number> = {};
           for (const l of cls) init[l.id] = l.checked_in_qty ?? 0;
           setCheckedInQty(init);
-        } catch { /* non-fatal */ }
+        } catch (e) {
+          setCheckinLoadErr(e instanceof Error ? e.message : 'Could not load check-in lines');
+        }
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Checkout failed');
@@ -203,6 +212,13 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
               </div>
             )}
           </div>
+
+          {/* Per-ticket check-in — load error */}
+          {success.synced && checkinLoadErr && (
+            <div className="bg-red-900/40 border border-red-700 text-red-200 text-xs p-3 rounded-xl">
+              Check-in unavailable: {checkinLoadErr}
+            </div>
+          )}
 
           {/* Per-ticket check-in */}
           {success.synced && checkinLines.length > 0 && (
