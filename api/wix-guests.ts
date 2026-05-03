@@ -70,6 +70,32 @@ export interface GuestRecord {
   tickets: { number: string; typeName: string; checkedIn: boolean }[];
 }
 
+/** Fetch all checked-in ticket numbers for an event via the v1/tickets endpoint.
+ *  This is the authoritative source — v2/guests/query never reflects check-in status. */
+async function fetchCheckedInTickets(eventId: string): Promise<Set<string>> {
+  const checked = new Set<string>();
+  const limit = 100;
+  for (let offset = 0; offset < 5000; offset += limit) {
+    const params = new URLSearchParams({
+      eventId,
+      fieldset: 'TICKET_DETAILS',
+      limit: String(limit),
+      offset: String(offset),
+    });
+    const res = await fetch(`${WIX_BASE}/events/v1/tickets?${params}`, {
+      headers: wixHeaders(false),
+    });
+    if (!res.ok) break;
+    const data = await res.json() as { tickets?: Array<{ ticketNumber?: string; checkIn?: unknown }> };
+    const tickets = data.tickets ?? [];
+    for (const t of tickets) {
+      if (t.ticketNumber && t.checkIn) checked.add(t.ticketNumber);
+    }
+    if (tickets.length < limit) break;
+  }
+  return checked;
+}
+
 async function fetchAllGuests(eventId: string, debug = false): Promise<{ guests: GuestRecord[]; rawSample?: unknown[] }> {
   const all: GuestRecord[] = [];
   const byOrder = new Map<string, GuestRecord>(); // orderNumber → merged record
@@ -169,6 +195,17 @@ async function fetchAllGuests(eventId: string, debug = false): Promise<{ guests:
   // Compute overall checkedIn: true only when every ticket is checked in
   for (const r of all) {
     r.checkedIn = r.tickets.length > 0 && r.tickets.every((t) => t.checkedIn);
+  }
+
+  // Overlay authoritative check-in status from v1/tickets
+  const checkedInTickets = await fetchCheckedInTickets(eventId);
+  for (const r of all) {
+    const tickets = r.tickets.map((t) => ({
+      ...t,
+      checkedIn: t.checkedIn || checkedInTickets.has(t.number),
+    }));
+    r.tickets = tickets;
+    r.checkedIn = tickets.length > 0 && tickets.every((t) => t.checkedIn);
   }
 
   // Sort: unchecked-in first, then last name alpha
