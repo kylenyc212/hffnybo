@@ -367,6 +367,16 @@ export function HeartlandReceiptModal({ receipt, onClose }: Props) {
           <div className="bg-red-900/40 border border-red-700 text-red-200 text-sm p-3 rounded-xl">{err}</div>
         )}
 
+        {/* Catalog debug — visible when items are unmatched */}
+        {catalog && matched && matched.some((m) => !m.matched) && (
+          <div className="text-xs text-slate-500 px-1">
+            Catalog: {catalog.screenings.length} screenings · {catalog.ticketTypes.length} ticket types
+            {catalog.screenings.length === 0 && (
+              <span className="text-red-400 ml-1">⚠ No screenings loaded — try refreshing</span>
+            )}
+          </div>
+        )}
+
         {matched && matched.length > 0 && catalog && (
           <div className="space-y-2">
             {matched.map((m, i) => {

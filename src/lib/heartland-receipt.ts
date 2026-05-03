@@ -213,6 +213,7 @@ export interface MatchedItem {
 
 export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<MatchedItem[]> {
   const { ticketTypes, screenings } = await loadCatalog();
+  console.log('[HL match] catalog:', screenings.length, 'screenings,', ticketTypes.length, 'ticket types');
   const screeningMap = new Map(screenings.map((s) => [s.id, s]));
 
   return items.map((item): MatchedItem => {
@@ -261,6 +262,7 @@ export async function matchReceiptItems(items: HeartlandLineItem[]): Promise<Mat
       // month is 1-indexed in the receipt, 0-indexed in JS
       return d.getMonth() + 1 === mon && d.getDate() === day;
     });
+    console.log(`[HL match] "${item.rawName}" → code="${code}" date=${mon}/${day} suffix="${suffix}" → ${matchingScreenings.length} screening(s) matched`);
 
     // Among matching screenings, find ticket type whose label or sku
     // includes the suffix (GA=General, SS=Student/Senior, etc.)
