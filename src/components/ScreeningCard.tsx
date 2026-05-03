@@ -64,7 +64,7 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
       label: otherLabel.trim(),
       qty: otherQty,
       unitPriceCents: amt,
-      category: 'other',
+      category: alwaysAvailable ? 'paid' : 'other',
       compCategory: null,
       passholderId: null,
       patronName: null
@@ -140,7 +140,8 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
             </button>
           ))}
           {/* Other button — sits inline with paid types; expands a form below */}
-          {!alwaysAvailable && (
+          {/* Also shown for the MERCH pseudo-screening so staff can add custom items */}
+          {(!alwaysAvailable || screening.short_code === 'MERCH') && (
             <button
               onClick={() => setOtherOpen(!otherOpen)}
               className={`rounded-lg px-3 py-3 text-left border transition-colors ${
@@ -157,11 +158,11 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
       )}
 
       {/* Other / custom ticket inline form */}
-      {!alwaysAvailable && otherOpen && (
+      {(!alwaysAvailable || screening.short_code === 'MERCH') && otherOpen && (
         <div className="mb-2 bg-slate-900 border border-slate-600 rounded-lg p-3 grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
           <input
             className="sm:col-span-3 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
-            placeholder="Label (e.g. Sponsor comp)"
+            placeholder={alwaysAvailable ? 'Item name (e.g. Poster)' : 'Label (e.g. Sponsor comp)'}
             value={otherLabel}
             onChange={(e) => setOtherLabel(e.target.value)}
           />
