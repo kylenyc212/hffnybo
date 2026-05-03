@@ -9,6 +9,16 @@ import {
 } from '../lib/checkins';
 import type { BOGuestOrder } from '../lib/checkins';
 import { useSession } from '../lib/session';
+import { supabase } from '../lib/supabase';
+
+/** Load ticket numbers checked in via our QR scanner for a Wix event. */
+async function loadWixCheckinTickets(wixEventId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from('wix_checkins')
+    .select('ticket_number')
+    .eq('wix_event_id', wixEventId);
+  return new Set((data ?? []).map((r: { ticket_number: string }) => r.ticket_number));
+}
 
 interface GuestTicket {
   number: string;
@@ -111,17 +121,37 @@ export function GuestListTab({ jumpToEventId, onJumpConsumed }: GuestListTabProp
     setTicketBusy({});
     setTicketError({});
 
-    // Fetch Wix guests + linked BO screening in parallel
-    const [wixResult, boScreening] = await Promise.allSettled([
+    // Fetch Wix guests + our check-in records + linked BO screening in parallel
+    const [wixResult, ourCheckinsResult, boScreening] = await Promise.allSettled([
       fetch(`/api/wix-guests?eventId=${encodeURIComponent(eventId)}`)
         .then((r) => r.json() as Promise<{ guests?: GuestRecord[]; error?: string }>),
+      loadWixCheckinTickets(eventId),
       lookupScreeningByWixId(eventId),
     ]);
 
-    // Wix guests
+    // Wix guests — overlay check-in status from our own DB
+    // (Wix guests/query API never updates checkedIn/attendanceStatus after ticket check-in)
     if (wixResult.status === 'fulfilled') {
       const data = wixResult.value;
-      const fetched = data.guests ?? [];
+      let fetched = data.guests ?? [];
+      const ourCheckins = wixResult.status === 'fulfilled' && ourCheckinsResult.status === 'fulfilled'
+        ? ourCheckinsResult.value
+        : new Set<string>();
+
+      if (ourCheckins.size > 0) {
+        fetched = fetched.map((g) => {
+          const tickets = g.tickets.map((t) => ({
+            ...t,
+            checkedIn: t.checkedIn || ourCheckins.has(t.number),
+          }));
+          return {
+            ...g,
+            tickets,
+            checkedIn: tickets.length > 0 && tickets.every((t) => t.checkedIn),
+          };
+        });
+      }
+
       const now = new Date().toISOString();
       _cache.selectedEventId = eventId;
       _cache.guests = fetched;
