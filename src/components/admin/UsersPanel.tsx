@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { addUser, listUsers, resetUserPin, setUserActive } from '../../lib/admin';
+import { addUser, listUsers, renameUser, resetUserPin, setUserActive } from '../../lib/admin';
 import type { UserRole, UserRow } from '../../lib/database.types';
 import { InputPromptModal } from '../InputPromptModal';
 
@@ -12,6 +12,7 @@ export function UsersPanel() {
   const [newPin, setNewPin] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('cashier');
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
+  const [renameFor, setRenameFor] = useState<UserRow | null>(null);
 
   async function reload() {
     try { setList(await listUsers()); }
@@ -86,6 +87,10 @@ export function UsersPanel() {
               </div>
               <div className="flex gap-2">
                 <button
+                  onClick={() => setRenameFor(u)}
+                  className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded"
+                >Rename</button>
+                <button
                   onClick={() => setResetFor(u)}
                   className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded"
                 >Reset PIN</button>
@@ -106,6 +111,27 @@ export function UsersPanel() {
         </ul>
       </div>
 
+      {renameFor && (
+        <InputPromptModal
+          title={`Rename ${renameFor.name}`}
+          label="New name"
+          initial={renameFor.name}
+          placeholder="Full name"
+          confirmLabel="Save"
+          onClose={() => setRenameFor(null)}
+          onConfirm={async (name) => {
+            if (!name.trim()) { alert('Name cannot be empty'); return; }
+            try {
+              await renameUser(renameFor.id, name);
+              setRenameFor(null);
+              setMsg('Name updated.');
+              await reload();
+            } catch (e: unknown) {
+              alert(e instanceof Error ? e.message : 'Failed');
+            }
+          }}
+        />
+      )}
       {resetFor && (
         <InputPromptModal
           title={`Reset PIN for ${resetFor.name}`}

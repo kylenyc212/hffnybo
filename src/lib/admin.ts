@@ -180,3 +180,8 @@ export async function resetUserPin(id: string, newPin: string) {
   const { error } = await supabase.from('users').update({ pin_hash }).eq('id', id);
   if (error) throw error;
 }
+
+export async function renameUser(id: string, name: string) {
+  const { error } = await supabase.from('users').update({ name: name.trim() }).eq('id', id);
+  if (error) throw error;
+}

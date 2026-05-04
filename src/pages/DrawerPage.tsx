@@ -16,6 +16,7 @@ import type { CashCountRow, CashDrawerRow, DenomBreakdown } from '../lib/databas
 import { DenomCounter, totalFromDenoms } from '../components/DenomCounter';
 import { VoidModal } from '../components/VoidModal';
 import { HardDeleteModal } from '../components/HardDeleteModal';
+import { InputPromptModal } from '../components/InputPromptModal';
 import { getCheckinLinesForOrder, deleteOrderLine, type OrderLineWithScreening } from '../lib/checkins';
 import { fmtTime } from '../lib/datetime';
 import { sendReceiptEmail } from '../lib/email';
@@ -270,6 +271,10 @@ function OpenDrawerView({
   const [customerNameDraft, setCustomerNameDraft] = useState('');
   const [customerEmailDraft, setCustomerEmailDraft] = useState('');
   const [customerSaving, setCustomerSaving] = useState(false);
+
+  // Cash event reason editing (removal/add/adjustment)
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editReasonDraft, setEditReasonDraft] = useState('');
 
   async function saveCustomer(orderId: string) {
     setCustomerSaving(true);
@@ -585,6 +590,30 @@ function OpenDrawerView({
         </div>
       )}
 
+      {editingEventId && (
+        <InputPromptModal
+          title="Edit description"
+          label="Description"
+          initial={editReasonDraft}
+          placeholder="e.g. Change for $100 bill"
+          confirmLabel="Save"
+          onClose={() => setEditingEventId(null)}
+          onConfirm={async (newReason) => {
+            try {
+              const { error } = await supabase
+                .from('cash_events')
+                .update({ reason: newReason || null })
+                .eq('id', editingEventId);
+              if (error) throw error;
+              setEditingEventId(null);
+              onRefresh();
+            } catch (e: unknown) {
+              alert(e instanceof Error ? e.message : 'Save failed');
+            }
+          }}
+        />
+      )}
+
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <div className="text-sm font-semibold mb-3">Activity ({events.length})</div>
         {events.length === 0 ? (
@@ -599,6 +628,7 @@ function OpenDrawerView({
                 e.kind !== 'sale' && e.kind !== 'open' && e.kind !== 'close' && !cashEventVoided;
               const canVoidSale = e.kind === 'sale' && !saleVoided && !!e.order_id;
               const canDelete = isSuperAdmin && e.kind !== 'open' && e.kind !== 'close';
+              const canEditReason = isSuperAdmin && ['removal', 'add', 'adjustment'].includes(e.kind);
               const canExpand = e.kind === 'sale' && !!e.order_id;
               const isExpanded = expandedOrderId === e.order_id;
               const _d = new Date(e.created_at);
@@ -631,7 +661,17 @@ function OpenDrawerView({
                           {e.kind}
                           {isVoided ? ' (voided)' : ''}
                         </span>
-                        {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+                        {canEditReason ? (
+                          <button
+                            onClick={() => { setEditingEventId(e.id); setEditReasonDraft(e.reason ?? ''); }}
+                            className="text-slate-400 hover:text-slate-200 group"
+                          >
+                            {e.reason ? ` — ${e.reason}` : <span className="italic text-slate-600">+ add description</span>}
+                            <span className="opacity-0 group-hover:opacity-100 text-slate-500 text-[10px] ml-1">✎</span>
+                          </button>
+                        ) : (
+                          e.reason && <span className="text-slate-400"> — {e.reason}</span>
+                        )}
                         {/* Customer name inline on the sale line */}
                         {e.kind === 'sale' && !isVoided && (
                           <button
