@@ -608,7 +608,7 @@ function OpenDrawerView({
                   {/* Main row */}
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm">
+                      <div className="text-sm flex items-baseline gap-1.5 flex-wrap">
                         <span
                           className={
                             isVoided
@@ -632,6 +632,27 @@ function OpenDrawerView({
                           {isVoided ? ' (voided)' : ''}
                         </span>
                         {e.reason && <span className="text-slate-400"> — {e.reason}</span>}
+                        {/* Customer name inline on the sale line */}
+                        {e.kind === 'sale' && !isVoided && (
+                          <button
+                            onClick={() => {
+                              setEditingCustomer(e.order_id!);
+                              setCustomerNameDraft(e.order_customer_name ?? '');
+                              setCustomerEmailDraft(e.order_customer_email ?? '');
+                              setEmailFor(null);
+                            }}
+                            className="flex items-center gap-1 group"
+                          >
+                            {e.order_customer_name || e.order_customer_email ? (
+                              <span className="text-indigo-300 group-hover:text-indigo-200 text-sm font-medium">
+                                {[e.order_customer_name, e.order_customer_email].filter(Boolean).join(' · ')}
+                              </span>
+                            ) : (
+                              <span className="text-slate-600 italic text-xs group-hover:text-slate-400">+ add name</span>
+                            )}
+                            <span className="opacity-0 group-hover:opacity-100 text-slate-500 text-[10px]">✎</span>
+                          </button>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500">
                         {timeLabel} · {e.who}
@@ -653,26 +674,6 @@ function OpenDrawerView({
                             </div>
                           ))}
                         </div>
-                      )}
-                      {e.kind === 'sale' && !isVoided && (
-                        <button
-                          onClick={() => {
-                            setEditingCustomer(e.order_id!);
-                            setCustomerNameDraft(e.order_customer_name ?? '');
-                            setCustomerEmailDraft(e.order_customer_email ?? '');
-                            setEmailFor(null);
-                          }}
-                          className="mt-0.5 flex items-center gap-1 text-xs group text-left"
-                        >
-                          {e.order_customer_name || e.order_customer_email ? (
-                            <span className="text-indigo-300 group-hover:text-indigo-200">
-                              {[e.order_customer_name, e.order_customer_email].filter(Boolean).join(' · ')}
-                            </span>
-                          ) : (
-                            <span className="text-slate-600 italic group-hover:text-slate-400">+ add name</span>
-                          )}
-                          <span className="opacity-0 group-hover:opacity-100 text-slate-500 text-[10px]">✎</span>
-                        </button>
                       )}
                     </div>
                     <div
