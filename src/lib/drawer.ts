@@ -11,6 +11,16 @@ import { enqueueOp } from './offlineQueue';
  * such row exists via a partial unique index.
  * Caches the result so offline devices can still see the drawer.
  */
+export async function listClosedDrawers(): Promise<CashDrawerRow[]> {
+  const { data, error } = await supabase
+    .from('cash_drawers')
+    .select('*')
+    .not('closed_at', 'is', null)
+    .order('opened_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as CashDrawerRow[];
+}
+
 export async function getOpenDrawer(): Promise<CashDrawerRow | null> {
   try {
     const { data, error } = await supabase
