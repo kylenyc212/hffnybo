@@ -1,5 +1,6 @@
-// GET  /api/wix-checkin?ticket=AAAA-AAAA-BB021&eventId=xxx  → look up a Wix ticket
-// POST /api/wix-checkin  { ticketNumber, eventId }           → mark checked in
+// GET    /api/wix-checkin?ticket=AAAA-AAAA-BB021&eventId=xxx  → look up a Wix ticket
+// POST   /api/wix-checkin  { ticketNumber, eventId }          → mark checked in
+// DELETE /api/wix-checkin  { ticketNumber, eventId }          → undo check-in
 //
 // The Wix ticket QR code encodes:
 //   https://www.wixevents.com/check-in/{ticketNumber},{eventId}
@@ -259,6 +260,32 @@ export default async function handler(req: VReq, res: VRes) {
           hint: r.status === 403 || r.status === 401
             ? 'API key is missing "Manage Guest List" permission.'
             : undefined,
+        });
+        return;
+      }
+      res.status(200).json(data);
+      return;
+    }
+
+    // ── DELETE: undo check-in ────────────────────────────────────────────
+    if (req.method === 'DELETE') {
+      const ticketNumber = String(req.body?.ticketNumber ?? '').trim();
+      const eventId      = String(req.body?.eventId      ?? '').trim();
+      if (!ticketNumber || !eventId) {
+        res.status(400).json({ error: 'ticketNumber and eventId required' });
+        return;
+      }
+      const r = await fetch(`${WIX_BASE}/events/v1/tickets/check-in`, {
+        method: 'DELETE',
+        headers: postHeaders,
+        body: JSON.stringify({ eventId, ticketNumber: [ticketNumber] }),
+      });
+      const data = await r.json() as Record<string, unknown>;
+      if (!r.ok) {
+        res.status(r.status).json({
+          error: String(data.message ?? 'Undo check-in failed'),
+          wixStatus: r.status,
+          raw: data,
         });
         return;
       }

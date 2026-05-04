@@ -83,6 +83,7 @@ export function CheckInPage() {
   const [busy, setBusy] = useState(false);
   const [camStatus, setCamStatus] = useState('Starting camera…');
   const [scanScreening, setScanScreening] = useState<{ id: string; title: string; starts_at: string } | null>(null);
+  const [undoing, setUndoing] = useState(false);
 
   const videoRef    = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
@@ -169,6 +170,7 @@ export function CheckInPage() {
     setErr(null);
     setShowRaw(false);
     setScanScreening(null);
+    setUndoing(false);
     setPhase('lookup');
     setBusy(true);
 
@@ -192,9 +194,7 @@ export function CheckInPage() {
       }
       const t = (data.ticket ?? data) as WixTicket;
 
-      // Guard: if the response has no recognisable Wix ticket fields, this is
-      // almost certainly a pass/staff barcode (or other non-Wix code) that the
-      // API echoed back with a 200. Reject it immediately so the camera resets.
+      // Guard: reject non-Wix barcodes (pass/staff codes) immediately.
       const looksLikeWixTicket = !!(
         t.guestFullName ||
         t.orderFullName ||
@@ -215,8 +215,51 @@ export function CheckInPage() {
         return;
       }
 
-      setTicket({ ...t, ticketNumber: t.ticketNumber ?? tn });
-      setPhase('review');
+      const tWithNum = { ...t, ticketNumber: t.ticketNumber ?? tn };
+      setTicket(tWithNum);
+
+      const thisCanceled  = !!t.canceled;
+      const thisAlreadyIn = detectCheckedIn(t);
+
+      // Canceled or already checked in → show review screen with the warning.
+      if (thisCanceled || thisAlreadyIn) {
+        setPhase('review');
+        return;
+      }
+
+      // ── Auto check-in: valid ticket, no confirmation needed ──
+      const checkRes = await fetch('/api/wix-checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketNumber: tn, eventId: eid }),
+      });
+      const checkData = await checkRes.json() as Record<string, unknown>;
+      if (!checkRes.ok) {
+        // Check-in failed — fall back to manual review so staff can see the error
+        setErr(String(checkData.error ?? 'Auto check-in failed — tap Check In to retry'));
+        setPhase('review');
+        return;
+      }
+
+      // Record in our DB (best-effort)
+      if (user) {
+        const gdn = t.guestDetails
+          ? [t.guestDetails.firstName, t.guestDetails.lastName].filter(Boolean).join(' ')
+          : null;
+        const gn = t.guestFullName ?? t.orderFullName ?? gdn ?? null;
+        const tt = t.name ?? (t.orderStatus === 'FREE' ? 'Free / Comp' : null);
+        recordWixCheckin({
+          ticketNumber: tn,
+          wixEventId:   eid,
+          screeningId:  scanScreening?.id ?? null,
+          checkedInBy:  user.name,
+          guestName:    gn || null,
+          ticketType:   (tt && tt !== 'Ticket') ? tt : null,
+        }).catch(() => {});
+      }
+
+      setPhase('done');
+      refreshCounts();
     } catch {
       setErr('Network error looking up ticket.');
       setPhase('scan');
@@ -265,6 +308,32 @@ export function CheckInPage() {
       setErr('Network error during check-in.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function doUndo() {
+    const tn  = ticket?.ticketNumber ?? ticketNum;
+    const eid = eventId || String(ticket?.eventId ?? '');
+    if (!tn || !eid) return;
+    setUndoing(true);
+    setErr(null);
+    try {
+      const res  = await fetch('/api/wix-checkin', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketNumber: tn, eventId: eid }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) {
+        setErr(String(data.error ?? 'Undo failed'));
+        return;
+      }
+      refreshCounts();
+      reset();
+    } catch {
+      setErr('Network error — undo failed.');
+    } finally {
+      setUndoing(false);
     }
   }
 
@@ -494,7 +563,7 @@ export function CheckInPage() {
 
       {/* ── Done phase ── */}
       {phase === 'done' && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="bg-emerald-900/60 border-2 border-emerald-600 rounded-2xl p-10 text-center">
             <div className="text-6xl mb-4">✓</div>
             <div className="text-3xl font-bold text-emerald-300 leading-tight">{guestName}</div>
@@ -506,8 +575,20 @@ export function CheckInPage() {
             )}
             <div className="text-emerald-400 mt-3 font-semibold">Checked in!</div>
           </div>
+          {err && (
+            <div className="bg-red-900 border-2 border-red-500 text-red-100 font-bold text-center p-3 rounded-2xl text-sm">
+              ⚠ {err}
+            </div>
+          )}
           <button onClick={reset} className="w-full bg-brand hover:bg-brand-dark text-white font-bold py-4 rounded-xl text-xl">
             Scan next ticket
+          </button>
+          <button
+            onClick={doUndo}
+            disabled={undoing}
+            className="w-full bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 font-semibold py-3 rounded-xl text-sm"
+          >
+            {undoing ? 'Undoing…' : 'Undo check-in'}
           </button>
         </div>
       )}
