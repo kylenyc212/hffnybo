@@ -601,9 +601,8 @@ function OpenDrawerView({
               const canDelete = isSuperAdmin && e.kind !== 'open' && e.kind !== 'close';
               const canExpand = e.kind === 'sale' && !!e.order_id;
               const isExpanded = expandedOrderId === e.order_id;
-              const timeLabel = new Date(e.created_at).toLocaleTimeString('en-US', {
-                timeZone: 'America/New_York'
-              });
+              const _d = new Date(e.created_at);
+              const timeLabel = `${_d.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'numeric', day: 'numeric' })} @ ${_d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })}`;
               return (
                 <li key={e.id} className="py-2">
                   {/* Main row */}
@@ -641,6 +640,20 @@ function OpenDrawerView({
                           <> · voided by {e.voided_by}{e.void_reason ? ` (${e.void_reason})` : ''}</>
                         )}
                       </div>
+                      {/* Inline item summary for sale events */}
+                      {e.kind === 'sale' && e.order_items && e.order_items.length > 0 && (
+                        <div className="mt-0.5 space-y-0">
+                          {e.order_items.map((item, idx) => (
+                            <div key={idx} className={`text-xs ${isVoided ? 'text-slate-600' : 'text-slate-400'}`}>
+                              {item.qty > 1 && <span className="tabular-nums">{item.qty}× </span>}
+                              {item.label}
+                              {item.screeningTitle && item.screeningTitle !== item.label && (
+                                <span className="text-slate-500"> · {item.screeningTitle}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {e.kind === 'sale' && !isVoided && (
                         <button
                           onClick={() => {

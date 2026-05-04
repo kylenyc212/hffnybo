@@ -161,6 +161,12 @@ export async function loadDrawerEvents(drawerId: string): Promise<CashEventRow[]
   }
 }
 
+export interface OrderLineItem {
+  label: string;
+  qty: number;
+  screeningTitle: string;
+}
+
 export interface EnrichedEvent extends CashEventRow {
   order_voided?: boolean;
   order_device?: string;
@@ -169,22 +175,56 @@ export interface EnrichedEvent extends CashEventRow {
   order_customer_name?: string | null;
   order_external_ref?: string | null;
   order_source?: string | null;
+  order_items?: OrderLineItem[];
 }
 
 export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEvent[]> {
   const events = await loadDrawerEvents(drawerId);
   const orderIds = Array.from(new Set(events.map((e) => e.order_id).filter(Boolean))) as string[];
   if (orderIds.length === 0) return events;
-  const { data, error } = await supabase
-    .from('orders')
-    .select('id, voided_at, device_label, cashier_name, customer_email, customer_name, external_ref, source')
-    .in('id', orderIds);
-  if (error) return events;
+
+  // Fetch orders + order_lines + screenings in parallel
+  const [ordersRes, linesRes] = await Promise.all([
+    supabase
+      .from('orders')
+      .select('id, voided_at, device_label, cashier_name, customer_email, customer_name, external_ref, source')
+      .in('id', orderIds),
+    supabase
+      .from('order_lines')
+      .select('order_id, label, qty, screening_id')
+      .in('order_id', orderIds),
+  ]);
+
   type OrderRow = { id: string; voided_at: string | null; device_label: string; cashier_name: string; customer_email: string | null; customer_name: string | null; external_ref: string | null; source: string | null };
-  const map = new Map((data ?? []).map((o) => [o.id as string, o as OrderRow]));
+  type LineRow = { order_id: string; label: string; qty: number; screening_id: string };
+
+  const orderMap = new Map((ordersRes.data ?? []).map((o) => [o.id as string, o as OrderRow]));
+  const lines = (linesRes.data ?? []) as LineRow[];
+
+  // Fetch screening titles for all referenced screenings
+  const scIds = Array.from(new Set(lines.map((l) => l.screening_id)));
+  const scMap = new Map<string, string>();
+  if (scIds.length > 0) {
+    const { data: scData } = await supabase
+      .from('screenings')
+      .select('id, title, is_always_available')
+      .in('id', scIds);
+    for (const s of (scData ?? []) as { id: string; title: string; is_always_available: boolean }[]) {
+      scMap.set(s.id, s.title);
+    }
+  }
+
+  // Group lines by order_id
+  const linesByOrder = new Map<string, OrderLineItem[]>();
+  for (const l of lines) {
+    const existing = linesByOrder.get(l.order_id) ?? [];
+    existing.push({ label: l.label, qty: l.qty, screeningTitle: scMap.get(l.screening_id) ?? '' });
+    linesByOrder.set(l.order_id, existing);
+  }
+
   return events.map((e) => {
     if (!e.order_id) return e;
-    const o = map.get(e.order_id);
+    const o = orderMap.get(e.order_id);
     if (!o) return e;
     return {
       ...e,
@@ -195,6 +235,7 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
       order_customer_name: o.customer_name,
       order_external_ref: o.external_ref,
       order_source: o.source,
+      order_items: linesByOrder.get(e.order_id),
     };
   });
 }
