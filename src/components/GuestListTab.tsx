@@ -6,6 +6,7 @@ import {
   loadBOGuestsForScreening,
   checkInOne,
   uncheckInOne,
+  recordWixCheckin,
 } from '../lib/checkins';
 import type { BOGuestOrder } from '../lib/checkins';
 import { useSession } from '../lib/session';
@@ -255,6 +256,18 @@ export function GuestListTab({ jumpToEventId, onJumpConsumed }: GuestListTabProp
         _cache.guests = updated;
         return updated;
       });
+
+      // Record in our DB so the main screen check-in count stays in sync
+      if (user) {
+        recordWixCheckin({
+          ticketNumber: ticket.number,
+          wixEventId:   selectedEventId,
+          screeningId:  boScreeningId,
+          checkedInBy:  user.name,
+          guestName:    [guest.firstName, guest.lastName].filter(Boolean).join(' ') || null,
+          ticketType:   ticket.typeName !== 'Ticket' ? ticket.typeName : null,
+        }).catch(() => {}); // best-effort
+      }
     } catch (e: unknown) {
       setTicketError((prev) => ({ ...prev, [ticket.number]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
