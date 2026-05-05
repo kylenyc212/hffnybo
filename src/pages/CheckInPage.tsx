@@ -174,20 +174,39 @@ export function CheckInPage() {
     setPhase('lookup');
     setBusy(true);
 
-    // Look up matching BO screening in parallel with ticket fetch
-    if (eid) {
-      lookupScreeningByWixId(eid)
-        .then((s) => { if (s) setScanScreening(s); })
-        .catch(() => {});
-    }
-
     try {
       const params = new URLSearchParams({ ticket: tn });
       if (eid) params.set('eventId', eid);
-      const res  = await fetch(`/api/wix-checkin?${params}`);
-      const data = await res.json() as Record<string, unknown>;
+
+      // Run ticket fetch and screening lookup in parallel so we have the
+      // resolved screening ID available when recording the check-in.
+      // NOTE: do NOT read `scanScreening` state here — it won't reflect the
+      // setScanScreening() call made inside a .then() callback within the
+      // same async function (React state is stale inside the closure).
+      const [ticketFetchResult, screeningResult] = await Promise.allSettled([
+        fetch(`/api/wix-checkin?${params}`).then(async (r) => ({
+          ok: r.ok,
+          status: r.status,
+          data: await r.json() as Record<string, unknown>,
+        })),
+        eid ? lookupScreeningByWixId(eid) : Promise.resolve(null),
+      ]);
+
+      // Apply screening to state so review/done phases render it
+      const resolvedScreening = screeningResult.status === 'fulfilled'
+        ? (screeningResult.value as { id: string; title: string; starts_at: string } | null)
+        : null;
+      if (resolvedScreening) setScanScreening(resolvedScreening);
+
+      if (ticketFetchResult.status === 'rejected') {
+        setErr('Network error looking up ticket.');
+        setPhase('scan');
+        return;
+      }
+
+      const { ok, data } = ticketFetchResult.value;
       setRawResponse(data);
-      if (!res.ok) {
+      if (!ok) {
         setErr(String(data.error ?? 'Ticket lookup failed'));
         setPhase('scan');
         return;
@@ -251,7 +270,7 @@ export function CheckInPage() {
         recordWixCheckin({
           ticketNumber: tn,
           wixEventId:   eid,
-          screeningId:  scanScreening?.id ?? null,
+          screeningId:  resolvedScreening?.id ?? null,  // use local var — state is stale here
           checkedInBy:  user.name,
           guestName:    gn || null,
           ticketType:   (tt && tt !== 'Ticket') ? tt : null,
