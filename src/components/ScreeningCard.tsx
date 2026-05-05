@@ -28,9 +28,11 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
   const [otherQty, setOtherQty] = useState(1);
 
   const alwaysAvailable = screening.is_always_available;
-  // manual_count = walk-in +1 taps: no order, but person is in a seat
-  const totalSold = screening.sold_in_person + screening.online_sold + screening.manual_count;
-  const remaining = Math.max(0, screening.capacity - totalSold);
+  // totalSold = real tickets only (financial metric, matches guest list)
+  // seatsUsed adds manual walk-ins for physical capacity protection
+  const totalSold = screening.sold_in_person + screening.online_sold;
+  const seatsUsed = totalSold + screening.manual_count;
+  const remaining = Math.max(0, screening.capacity - seatsUsed);
   const nearCapacity = !alwaysAvailable && remaining <= 10;
   const atCapacity = !alwaysAvailable && remaining <= 0;
 
@@ -105,7 +107,12 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
             {/* capacity column */}
             <div className="text-right text-xs">
               <div className={`font-semibold ${nearCapacity ? 'text-amber-400' : 'text-slate-500'}`}>{remaining} left</div>
-              <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>{totalSold}/{screening.capacity}</div>
+              <div className={nearCapacity ? 'text-amber-400' : 'text-slate-500'}>
+                {totalSold}/{screening.capacity}
+                {screening.manual_count > 0 && (
+                  <span className="ml-1 text-slate-600">+{screening.manual_count}w</span>
+                )}
+              </div>
             </div>
             {/* check-in column */}
             <div className="flex items-center gap-1.5">
