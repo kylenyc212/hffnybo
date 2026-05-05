@@ -10,6 +10,7 @@ import {
   deleteTicketType
 } from '../../lib/admin';
 import type { ScreeningRow, TicketTypeRow, TicketCategory, CompCategory } from '../../lib/database.types';
+import { InputPromptModal } from '../InputPromptModal';
 
 export function SchedulePanel() {
   const [list, setList] = useState<ScreeningRow[]>([]);
@@ -66,13 +67,12 @@ export function SchedulePanel() {
                   onCancel={() => setExpanded(null)}
                   onSaved={async () => { await reload(); }}
                   onDelete={async () => {
-                    if (!confirm('Delete screening? Will fail if any tickets already sold.')) return;
                     try {
                       await deleteScreening(s.id);
                       setExpanded(null);
                       await reload();
                     } catch (e: unknown) {
-                      alert(e instanceof Error ? e.message : 'Delete failed');
+                      throw e; // bubble up so ScreeningEditor can show the error
                     }
                   }}
                 />
@@ -92,7 +92,7 @@ function ScreeningEditor({
   existing?: ScreeningRow;
   onCancel: () => void;
   onSaved: () => void;
-  onDelete?: () => void;
+  onDelete?: () => Promise<void>;
 }) {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [startLocal, setStartLocal] = useState(existing ? toLocalInput(existing.starts_at) : '');
@@ -102,6 +102,7 @@ function ScreeningEditor({
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   async function save() {
     setErr(null);
@@ -197,11 +198,38 @@ function ScreeningEditor({
           Cancel
         </button>
         {onDelete && (
-          <button onClick={onDelete} className="ml-auto bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="ml-auto bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+          >
             Delete screening
           </button>
         )}
       </div>
+
+      {showDeleteModal && existing && (
+        <InputPromptModal
+          title="Delete screening?"
+          label={`Type the screening title to confirm deletion — this cannot be undone.`}
+          placeholder={existing.title}
+          confirmLabel="Delete"
+          confirmClassName="bg-red-700 hover:bg-red-600"
+          onClose={() => { setShowDeleteModal(false); setErr(null); }}
+          onConfirm={async (typed) => {
+            if (typed.trim() !== existing.title.trim()) {
+              setErr('Title did not match — deletion cancelled.');
+              setShowDeleteModal(false);
+              return;
+            }
+            try {
+              await onDelete!();
+            } catch (e: unknown) {
+              setErr(e instanceof Error ? e.message : 'Delete failed');
+              setShowDeleteModal(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -210,6 +238,7 @@ function TicketTypesEditor({ screeningId }: { screeningId: string }) {
   const [types, setTypes] = useState<TicketTypeRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [deletingType, setDeletingType] = useState<TicketTypeRow | null>(null);
 
   async function reload() {
     try { setTypes(await listTicketTypes(screeningId)); }
@@ -243,15 +272,37 @@ function TicketTypesEditor({ screeningId }: { screeningId: string }) {
               screeningId={screeningId}
               existing={t}
               onSaved={reload}
-              onDelete={async () => {
-                if (!confirm(`Delete ticket type "${t.label}"?`)) return;
-                try { await deleteTicketType(t.id); await reload(); }
-                catch (e: unknown) { alert(e instanceof Error ? e.message : 'Delete failed'); }
-              }}
+              onDelete={() => setDeletingType(t)}
             />
           </li>
         ))}
       </ul>
+
+      {deletingType && (
+        <InputPromptModal
+          title={`Delete "${deletingType.label}"?`}
+          label='Type DELETE to confirm — this cannot be undone.'
+          placeholder="DELETE"
+          confirmLabel="Delete"
+          confirmClassName="bg-red-700 hover:bg-red-600"
+          onClose={() => { setDeletingType(null); setErr(null); }}
+          onConfirm={async (typed) => {
+            if (typed.trim() !== 'DELETE') {
+              setErr('Type DELETE exactly to confirm.');
+              setDeletingType(null);
+              return;
+            }
+            try {
+              await deleteTicketType(deletingType.id);
+              setDeletingType(null);
+              await reload();
+            } catch (e: unknown) {
+              setErr(e instanceof Error ? e.message : 'Delete failed');
+              setDeletingType(null);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

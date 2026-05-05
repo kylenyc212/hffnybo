@@ -6,6 +6,7 @@ interface Props {
   initial?: string;
   placeholder?: string;
   confirmLabel?: string;
+  confirmClassName?: string;
   onClose: () => void;
   onConfirm: (value: string) => void;
 }
@@ -13,7 +14,9 @@ interface Props {
 // A reliable replacement for window.prompt() that works inside iOS PWA
 // standalone mode (where native prompt() is blocked).
 export function InputPromptModal({
-  title, label, initial = '', placeholder, confirmLabel = 'OK', onClose, onConfirm
+  title, label, initial = '', placeholder, confirmLabel = 'OK',
+  confirmClassName = 'bg-brand hover:bg-brand-dark',
+  onClose, onConfirm
 }: Props) {
   const [val, setVal] = useState(initial);
 
@@ -50,7 +53,7 @@ export function InputPromptModal({
           >Cancel</button>
           <button
             type="submit"
-            className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-lg"
+            className={`flex-1 ${confirmClassName} text-white font-bold py-3 rounded-lg`}
           >{confirmLabel}</button>
         </div>
       </form>
