@@ -72,9 +72,14 @@ export function CatalogPage() {
   };
 
   // Optimistic check-in bump so the orange count updates immediately on +1 tap.
+  // Also bumps manual_count so the capacity / "X left" display stays accurate.
   const bumpCheckin = (screeningId: string) => {
     setScreenings((prev) =>
-      prev.map((s) => (s.id === screeningId ? { ...s, checkin_count: s.checkin_count + 1 } : s))
+      prev.map((s) =>
+        s.id === screeningId
+          ? { ...s, checkin_count: s.checkin_count + 1, manual_count: s.manual_count + 1 }
+          : s
+      )
     );
   };
 

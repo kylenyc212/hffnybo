@@ -28,7 +28,8 @@ export function ScreeningCard({ screening, onSold, onCheckedIn }: Props) {
   const [otherQty, setOtherQty] = useState(1);
 
   const alwaysAvailable = screening.is_always_available;
-  const totalSold = screening.sold_in_person + screening.online_sold;
+  // manual_count = walk-in +1 taps: no order, but person is in a seat
+  const totalSold = screening.sold_in_person + screening.online_sold + screening.manual_count;
   const remaining = Math.max(0, screening.capacity - totalSold);
   const nearCapacity = !alwaysAvailable && remaining <= 10;
   const atCapacity = !alwaysAvailable && remaining <= 0;

@@ -6,6 +6,7 @@ import * as cache from './cache';
 export interface ScreeningWithSold extends ScreeningRow {
   sold_in_person: number;
   checkin_count: number;
+  manual_count: number;   // walk-in +1 taps (count against capacity, no order)
   ticket_types: TicketTypeRow[];
 }
 
@@ -61,6 +62,8 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
     .select('screening_id, qty');
 
   const checkinByScreening = new Map<string, number>();
+  const manualByScreening  = new Map<string, number>();
+
   for (const r of ((checkedInLines ?? []) as { screening_id: string; checked_in_qty: number }[])) {
     checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + r.checked_in_qty);
   }
@@ -69,6 +72,7 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
   }
   for (const r of ((manualCheckins ?? []) as { screening_id: string; qty: number }[])) {
     checkinByScreening.set(r.screening_id, (checkinByScreening.get(r.screening_id) ?? 0) + r.qty);
+    manualByScreening.set(r.screening_id,  (manualByScreening.get(r.screening_id)  ?? 0) + r.qty);
   }
 
   const typeRows = (types ?? []) as TicketTypeRow[];
@@ -77,8 +81,9 @@ export async function loadScreenings(fromDate: string, toDate: string): Promise<
   return screeningRows.map((s) => ({
     ...s,
     sold_in_person: soldByScreening.get(s.id) ?? 0,
-    checkin_count: checkinByScreening.get(s.id) ?? 0,
-    ticket_types: typeRows.filter((t) => t.screening_id === s.id)
+    checkin_count:  checkinByScreening.get(s.id) ?? 0,
+    manual_count:   manualByScreening.get(s.id)  ?? 0,
+    ticket_types:   typeRows.filter((t) => t.screening_id === s.id)
   }));
   });
 }
