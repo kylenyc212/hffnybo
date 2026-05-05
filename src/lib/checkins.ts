@@ -92,26 +92,35 @@ export async function recordManualCheckin(screeningId: string, checkedInBy: stri
   if (error) throw error;
 }
 
+export interface CheckinCounts {
+  total:  Map<string, number>;
+  manual: Map<string, number>;
+}
+
 /** Combined check-in counts (in-person + Wix + manual taps) per screening_id.
- *  In-person counts use checked_in_qty (per-ticket granularity). */
-export async function loadCheckinCounts(): Promise<Map<string, number>> {
+ *  In-person counts use checked_in_qty (per-ticket granularity).
+ *  Returns both the overall total and a separate manual-only map. */
+export async function loadCheckinCounts(): Promise<CheckinCounts> {
   const [ipRes, wixRes, manualRes] = await Promise.all([
     supabase.from('order_lines').select('screening_id, checked_in_qty').gt('checked_in_qty', 0),
     supabase.from('wix_checkins').select('screening_id').not('screening_id', 'is', null),
     supabase.from('manual_checkins').select('screening_id, qty'),
   ]);
 
-  const counts = new Map<string, number>();
+  const total  = new Map<string, number>();
+  const manual = new Map<string, number>();
+
   for (const r of (ipRes.data ?? []) as { screening_id: string; checked_in_qty: number }[]) {
-    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + r.checked_in_qty);
+    total.set(r.screening_id, (total.get(r.screening_id) ?? 0) + r.checked_in_qty);
   }
   for (const r of (wixRes.data ?? []) as { screening_id: string }[]) {
-    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + 1);
+    total.set(r.screening_id, (total.get(r.screening_id) ?? 0) + 1);
   }
   for (const r of (manualRes.data ?? []) as { screening_id: string; qty: number }[]) {
-    counts.set(r.screening_id, (counts.get(r.screening_id) ?? 0) + r.qty);
+    total.set(r.screening_id,  (total.get(r.screening_id)  ?? 0) + r.qty);
+    manual.set(r.screening_id, (manual.get(r.screening_id) ?? 0) + r.qty);
   }
-  return counts;
+  return { total, manual };
 }
 
 /** Upcoming screenings for the check-in page header (90-min lookback so in-progress films show). */

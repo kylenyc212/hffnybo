@@ -69,6 +69,7 @@ export function CheckInPage() {
   // ── Upcoming screenings ──
   const [upcoming, setUpcoming] = useState<UpcomingScreening[]>([]);
   const [checkinCounts, setCheckinCounts] = useState<Map<string, number>>(new Map());
+  const [manualCounts,  setManualCounts]  = useState<Map<string, number>>(new Map());
 
   // ── Scanner state ──
   const [phase, setPhase] = useState<Phase>('scan');
@@ -95,7 +96,8 @@ export function CheckInPage() {
         loadCheckinCounts(),
       ]);
       setUpcoming(screens);
-      setCheckinCounts(counts);
+      setCheckinCounts(counts.total);
+      setManualCounts(counts.manual);
     } catch { /* ignore */ }
   }
 
@@ -438,13 +440,25 @@ export function CheckInPage() {
                 <div className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 mb-1">{s.title}</div>
                 <div className="text-xs text-slate-400">{fmtTime(s.starts_at)}</div>
                 <div className="flex items-center justify-between mt-2 gap-1">
-                  <span className="text-orange-400 font-bold text-sm">{count} ✓ in</span>
+                  <div>
+                    <span className="text-orange-400 font-bold text-sm">{count} ✓ in</span>
+                    {(manualCounts.get(s.id) ?? 0) > 0 && (
+                      <span className="ml-1.5 text-xs text-slate-500">
+                        ({manualCounts.get(s.id)} manual)
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={async (e) => {
                       e.stopPropagation(); // don't also trigger the card click
                       if (!user) return;
                       // optimistic update
                       setCheckinCounts((prev) => {
+                        const next = new Map(prev);
+                        next.set(s.id, (next.get(s.id) ?? 0) + 1);
+                        return next;
+                      });
+                      setManualCounts((prev) => {
                         const next = new Map(prev);
                         next.set(s.id, (next.get(s.id) ?? 0) + 1);
                         return next;
