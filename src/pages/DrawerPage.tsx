@@ -562,6 +562,10 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
   const [customerNameDraft, setCustomerNameDraft] = useState('');
   const [customerEmailDraft, setCustomerEmailDraft] = useState('');
   const [customerSaving, setCustomerSaving] = useState(false);
+  const [editingCash, setEditingCash] = useState<string | null>(null); // order_id
+  const [tenderedDraft, setTenderedDraft] = useState('');
+  const [changeDraft, setChangeDraft] = useState('');
+  const [cashSaving, setCashSaving] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editReasonDraft, setEditReasonDraft] = useState('');
 
@@ -579,6 +583,25 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
       alert(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setCustomerSaving(false);
+    }
+  }
+
+  async function saveCash(orderId: string) {
+    setCashSaving(true);
+    try {
+      const tendered = Math.round(parseFloat(tenderedDraft.replace(/[^0-9.]/g, '')) * 100) || 0;
+      const change   = Math.round(parseFloat(changeDraft.replace(/[^0-9.]/g, ''))   * 100) || 0;
+      const { error } = await supabase.from('orders').update({
+        cash_tendered_cents: tendered || null,
+        change_cents: change || null,
+      }).eq('id', orderId);
+      if (error) throw error;
+      setEditingCash(null);
+      onRefresh();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setCashSaving(false);
     }
   }
 
@@ -751,6 +774,37 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
                       ))}
                     </div>
                   )}
+                  {/* Cash tendered / change */}
+                  {e.kind === 'sale' && e.order_source !== 'external_heartland' && !isVoided && (
+                    isSuperAdmin ? (
+                      <button
+                        onClick={() => {
+                          setEditingCash(e.order_id!);
+                          setTenderedDraft(e.order_cash_tendered_cents ? (e.order_cash_tendered_cents / 100).toFixed(2) : '');
+                          setChangeDraft(e.order_change_cents ? (e.order_change_cents / 100).toFixed(2) : '');
+                          setEditingCustomer(null);
+                        }}
+                        className="mt-0.5 flex items-center gap-1 group"
+                      >
+                        {e.order_cash_tendered_cents ? (
+                          <span className="text-xs text-slate-500">
+                            Tendered {money(e.order_cash_tendered_cents)}
+                            {e.order_change_cents ? ` · Change ${money(e.order_change_cents)}` : ''}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-700 italic group-hover:text-slate-500">+ tendered / change</span>
+                        )}
+                        <span className="opacity-0 group-hover:opacity-100 text-slate-600 text-[10px]">✎</span>
+                      </button>
+                    ) : (
+                      (e.order_cash_tendered_cents ?? 0) > 0 && (
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          Tendered {money(e.order_cash_tendered_cents!)}
+                          {(e.order_change_cents ?? 0) > 0 && ` · Change ${money(e.order_change_cents!)}`}
+                        </div>
+                      )
+                    )
+                  )}
                 </div>
                 <div className={`tabular-nums font-semibold ${
                   isVoided ? 'text-slate-500 line-through' : e.amount_cents < 0 ? 'text-red-400' : ''
@@ -846,6 +900,47 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
                     >{customerSaving ? '…' : 'Save'}</button>
                     <button
                       onClick={() => setEditingCustomer(null)}
+                      className="text-slate-500 hover:text-white text-sm px-2"
+                    >✕</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline cash tendered / change editor (super admin only) */}
+              {e.kind === 'sale' && isSuperAdmin && editingCash === e.order_id && (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex gap-2 items-center">
+                    <span className="text-xs text-slate-400 w-20 shrink-0">Tendered</span>
+                    <input
+                      autoFocus
+                      type="text" inputMode="decimal"
+                      className="flex-1 bg-slate-900 border border-amber-600 rounded-lg px-3 py-1.5 text-sm tabular-nums"
+                      placeholder="0.00"
+                      value={tenderedDraft}
+                      onChange={(ev) => setTenderedDraft(ev.target.value)}
+                      onKeyDown={(ev) => { if (ev.key === 'Escape') setEditingCash(null); }}
+                    />
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <span className="text-xs text-slate-400 w-20 shrink-0">Change</span>
+                    <input
+                      type="text" inputMode="decimal"
+                      className="flex-1 bg-slate-900 border border-amber-600 rounded-lg px-3 py-1.5 text-sm tabular-nums"
+                      placeholder="0.00"
+                      value={changeDraft}
+                      onChange={(ev) => setChangeDraft(ev.target.value)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter') saveCash(e.order_id!);
+                        if (ev.key === 'Escape') setEditingCash(null);
+                      }}
+                    />
+                    <button
+                      disabled={cashSaving}
+                      onClick={() => saveCash(e.order_id!)}
+                      className="bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                    >{cashSaving ? '…' : 'Save'}</button>
+                    <button
+                      onClick={() => setEditingCash(null)}
                       className="text-slate-500 hover:text-white text-sm px-2"
                     >✕</button>
                   </div>

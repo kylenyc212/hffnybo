@@ -185,6 +185,8 @@ export interface EnrichedEvent extends CashEventRow {
   order_customer_name?: string | null;
   order_external_ref?: string | null;
   order_source?: string | null;
+  order_cash_tendered_cents?: number | null;
+  order_change_cents?: number | null;
   order_items?: OrderLineItem[];
 }
 
@@ -197,7 +199,7 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
   const [ordersRes, linesRes] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, voided_at, device_label, cashier_name, customer_email, customer_name, external_ref, source')
+      .select('id, voided_at, device_label, cashier_name, customer_email, customer_name, external_ref, source, cash_tendered_cents, change_cents')
       .in('id', orderIds),
     supabase
       .from('order_lines')
@@ -205,7 +207,7 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
       .in('order_id', orderIds),
   ]);
 
-  type OrderRow = { id: string; voided_at: string | null; device_label: string; cashier_name: string; customer_email: string | null; customer_name: string | null; external_ref: string | null; source: string | null };
+  type OrderRow = { id: string; voided_at: string | null; device_label: string; cashier_name: string; customer_email: string | null; customer_name: string | null; external_ref: string | null; source: string | null; cash_tendered_cents: number | null; change_cents: number | null };
   type LineRow = { order_id: string; label: string; qty: number; screening_id: string };
 
   const orderMap = new Map((ordersRes.data ?? []).map((o) => [o.id as string, o as OrderRow]));
@@ -245,6 +247,8 @@ export async function loadDrawerActivity(drawerId: string): Promise<EnrichedEven
       order_customer_name: o.customer_name,
       order_external_ref: o.external_ref,
       order_source: o.source,
+      order_cash_tendered_cents: o.cash_tendered_cents,
+      order_change_cents: o.change_cents,
       order_items: linesByOrder.get(e.order_id),
     };
   });
