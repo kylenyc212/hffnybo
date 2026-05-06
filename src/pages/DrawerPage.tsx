@@ -566,6 +566,7 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
   const [tenderedDraft, setTenderedDraft] = useState('');
   const [changeDraft, setChangeDraft] = useState('');
   const [cashSaving, setCashSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editReasonDraft, setEditReasonDraft] = useState('');
 
@@ -592,14 +593,14 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
       const tendered = Math.round(parseFloat(tenderedDraft.replace(/[^0-9.]/g, '')) * 100) || 0;
       const change   = Math.round(parseFloat(changeDraft.replace(/[^0-9.]/g, ''))   * 100) || 0;
       const { error } = await supabase.from('orders').update({
-        cash_tendered_cents: tendered || null,
-        change_cents: change || null,
+        cash_tendered_cents: tendered,
+        change_cents: change,
       }).eq('id', orderId);
       if (error) throw error;
       setEditingCash(null);
       onRefresh();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Save failed');
+      setSaveErr(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setCashSaving(false);
     }
@@ -783,6 +784,7 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
                           setTenderedDraft(e.order_cash_tendered_cents ? (e.order_cash_tendered_cents / 100).toFixed(2) : '');
                           setChangeDraft(e.order_change_cents ? (e.order_change_cents / 100).toFixed(2) : '');
                           setEditingCustomer(null);
+                          setSaveErr(null);
                         }}
                         className="mt-0.5 flex items-center gap-1 group"
                       >
@@ -940,10 +942,13 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
                       className="bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
                     >{cashSaving ? '…' : 'Save'}</button>
                     <button
-                      onClick={() => setEditingCash(null)}
+                      onClick={() => { setEditingCash(null); setSaveErr(null); }}
                       className="text-slate-500 hover:text-white text-sm px-2"
                     >✕</button>
                   </div>
+                  {saveErr && (
+                    <div className="text-red-400 text-xs mt-1">{saveErr}</div>
+                  )}
                 </div>
               )}
 
