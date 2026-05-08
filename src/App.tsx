@@ -5,6 +5,7 @@ import { DrawerPage } from './pages/DrawerPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { AdminPage } from './pages/AdminPage';
 import { CheckInPage } from './pages/CheckInPage';
+import { ClosingPartyPage } from './pages/ClosingPartyPage';
 import { LoginGate } from './components/LoginGate';
 import { SyncIndicator } from './components/SyncIndicator';
 import { useSession } from './lib/session';
@@ -28,6 +29,7 @@ export default function App() {
             <NavLink to="/checkin" className={tabClass}>Check In</NavLink>
             <NavLink to="/drawer" className={tabClass}>Drawer</NavLink>
             <NavLink to="/reports" className={tabClass}>Reports</NavLink>
+            <NavLink to="/party" className={tabClass}>🎉 Party</NavLink>
             <NavLink to="/admin" className={tabClass}>Admin</NavLink>
           </nav>
           <div className="flex items-center gap-3 px-4">
@@ -60,6 +62,7 @@ export default function App() {
             <Route path="/drawer" element={<DrawerPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/checkin" element={<CheckInPage />} />
+            <Route path="/party" element={<ClosingPartyPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Routes>
         </main>
