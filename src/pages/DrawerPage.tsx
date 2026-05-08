@@ -73,7 +73,8 @@ export function DrawerPage() {
   }, [refresh]);
 
   async function togglePast() {
-    if (!showPast && pastDrawers.length === 0) {
+    // Always re-fetch when opening the panel so newly-closed drawers appear
+    if (!showPast) {
       setPastLoading(true);
       try {
         setPastDrawers(await listClosedDrawers());
