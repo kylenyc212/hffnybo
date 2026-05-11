@@ -1046,6 +1046,97 @@ function DrawerActivityList({ events, isSuperAdmin, onVoidRequest, onDeleteReque
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CSV export helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function csvCell(v: string | number | null | undefined): string {
+  const s = v == null ? '' : String(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
+}
+function csvRow(cells: (string | number | null | undefined)[]) {
+  return cells.map(csvCell).join(',');
+}
+function fmtNY(iso: string | null | undefined) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'numeric', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+function downloadCSVFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildDrawerCSV(drawer: CashDrawerRow, events: EnrichedEvent[]): string {
+  const isLive = (e: EnrichedEvent) => !e.voided_at;
+  const salesCents = events.filter(e => e.kind === 'sale' && !e.order_voided).reduce((s, e) => s + e.amount_cents, 0);
+  const addsCents  = events.filter(e => e.kind === 'add' && isLive(e)).reduce((s, e) => s + e.amount_cents, 0);
+  const removCents = events.filter(e => e.kind === 'removal' && isLive(e)).reduce((s, e) => s + e.amount_cents, 0);
+  const adjCents   = events.filter(e => e.kind === 'adjustment' && isLive(e)).reduce((s, e) => s + e.amount_cents, 0);
+  const expectedCents = events.length > 0
+    ? drawer.opening_cents + salesCents + adjCents + addsCents + removCents
+    : null;
+  const varianceCents = drawer.counted_cents != null && expectedCents != null
+    ? drawer.counted_cents - expectedCents : null;
+
+  const rows: string[] = [];
+
+  // ── Summary section ──
+  rows.push(csvRow(['HFFNY Cash Drawer Report']));
+  rows.push(csvRow(['Date', fmtNY(drawer.opened_at)]));
+  rows.push(csvRow(['Opened by', drawer.opened_by, 'Device', drawer.device_label]));
+  rows.push(csvRow(['Closed by', drawer.closed_by ?? '', 'Closed at', fmtNY(drawer.closed_at)]));
+  rows.push('');
+  rows.push(csvRow(['Opening float', (drawer.opening_cents / 100).toFixed(2)]));
+  rows.push(csvRow(['Cash sales', (salesCents / 100).toFixed(2)]));
+  if (addsCents) rows.push(csvRow(['Cash added', (addsCents / 100).toFixed(2)]));
+  if (removCents) rows.push(csvRow(['Cash removed', (removCents / 100).toFixed(2)]));
+  if (adjCents)  rows.push(csvRow(['Adjustments', (adjCents / 100).toFixed(2)]));
+  if (expectedCents != null) rows.push(csvRow(['Expected', (expectedCents / 100).toFixed(2)]));
+  if (drawer.counted_cents != null) rows.push(csvRow(['Counted', (drawer.counted_cents / 100).toFixed(2)]));
+  if (varianceCents != null) rows.push(csvRow(['Variance', (varianceCents / 100).toFixed(2)]));
+  rows.push('');
+
+  // ── Activity section ──
+  rows.push(csvRow([
+    'Time (NY)', 'Type', 'Amount', 'Reason / Items',
+    'Who', 'Customer Name', 'Customer Email',
+    'Cash Tendered', 'Change', 'Source', 'Voided',
+  ]));
+
+  for (const e of events) {
+    const items = e.order_items
+      ? e.order_items.map(i => `${i.qty}x ${i.label} (${i.screeningTitle})`).join('; ')
+      : '';
+    const reasonOrItems = items || e.reason || '';
+    rows.push(csvRow([
+      fmtNY(e.created_at),
+      e.kind,
+      (e.amount_cents / 100).toFixed(2),
+      reasonOrItems,
+      e.who,
+      e.order_customer_name ?? '',
+      e.order_customer_email ?? '',
+      e.order_cash_tendered_cents != null ? (e.order_cash_tendered_cents / 100).toFixed(2) : '',
+      e.order_change_cents != null ? (e.order_change_cents / 100).toFixed(2) : '',
+      e.order_source ?? '',
+      e.order_voided ? 'VOIDED' : e.voided_at ? 'VOIDED' : '',
+    ]));
+  }
+
+  return rows.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PastDrawerSection — one closed shift, lazy-loaded, collapsible
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1152,7 @@ function PastDrawerSection({
   const [events, setEvents] = useState<EnrichedEvent[]>([]);
   const [testCounts, setTestCounts] = useState<CashCountRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -1079,6 +1171,29 @@ function PastDrawerSection({
   function toggle() {
     if (!expanded && events.length === 0) loadData();
     setExpanded((v) => !v);
+  }
+
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation(); // don't toggle expand
+    setDownloading(true);
+    try {
+      // Load events if not already loaded
+      let ev = events;
+      if (ev.length === 0) {
+        const [fetched] = await Promise.all([loadDrawerActivity(drawer.id)]);
+        ev = fetched;
+        setEvents(fetched);
+      }
+      const shiftDate = new Date(drawer.opened_at).toLocaleDateString('en-US', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).replace(/\//g, '-');
+      const csv = buildDrawerCSV(drawer, ev);
+      downloadCSVFile(`drawer-${shiftDate}.csv`, csv);
+    } catch (ex: unknown) {
+      setErr(ex instanceof Error ? ex.message : 'Download failed');
+    } finally {
+      setDownloading(false);
+    }
   }
 
   // Stats (same formulas as OpenDrawerView)
@@ -1123,12 +1238,20 @@ function PastDrawerSection({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {drawer.counted_cents != null && (
             <span className="text-slate-300 tabular-nums font-semibold text-sm">
               {money(drawer.counted_cents)} counted
             </span>
           )}
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            title="Download CSV"
+            className="text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded px-2 py-1 text-xs font-semibold"
+          >
+            {downloading ? '…' : '↓ CSV'}
+          </button>
           <span className="text-slate-500 text-sm">{expanded ? '▾' : '▸'}</span>
         </div>
       </button>
